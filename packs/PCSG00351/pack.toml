@@ -18,6 +18,9 @@ TEST_ENV = "RECOMP_GFX=soft RECOMP_CLOCK=fixed"   # the gate's reference: softwa
 # one entry the update added (tex_nova_ui_common.aif, in no other archive): without it the game drew noise on Filldia
 # and its NOW LOADING screen. import builds the rePatch archive plus that entry (vitarecomp.py repatch_keep, 2026-11-18).
 REPATCH_KEEP = "NOVA_FileList_Vita_patch.cpk:tex_nova_ui_common.aif"
+# REPATCH = "off": Japanese game only (user decision 2026-11-18 evening); import skips repatch0 (same as RECOMP_NO_REPATCH=1)
+# and REPATCH_KEEP above is moot. Our own files (overlay0\, same layout as app0) are layered instead: vitarecomp.py cmd_import.
+REPATCH = "off"
 TEST_FRAMES = 1200
 TEST_TIMEOUT = 600
 

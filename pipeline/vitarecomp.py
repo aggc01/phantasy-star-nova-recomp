@@ -453,12 +453,21 @@ def cmd_import(g, src):
         # console's rePatch plugin serves ux0:rePatch/<title> in place of app0 (a fan translation's archives); the layer is
         # its own folder, app0_repatched, so app0_patched stays the game as Sony shipped it. RECOMP_NO_REPATCH=1: without it
         rp = os.path.join(W, "repatch0")
-        if os.path.isdir(rp) and not ENV.get("RECOMP_NO_REPATCH"):
+        # REPATCH = "off" (pack.toml) is the same as RECOMP_NO_REPATCH=1 for a pack that plays only the original game
+        # (Phantasy Star Nova from 2026-11-18 evening: Japanese only, localizations are our own overlay below)
+        if os.path.isdir(rp) and not ENV.get("RECOMP_NO_REPATCH") and (g.REPATCH or "").lower() != "off":
             for f in ("eboot.bin", "sce_module"):
                 if os.path.exists(os.path.join(rp, f)): say(f"{g.T}: its rePatch folder replaces {f}: not supported (the program is the game's own) -- ignored")
             run([PY, os.path.join(R, "packs.py"), "layer", src, rp, os.path.join(W, "app0_repatched")], env=env_with(TOOLS_ENV))
             repatch_keep(g, src, rp, os.path.join(W, "app0_repatched"))
             src = os.path.join(W, "app0_repatched"); say(f"{g.T}: its rePatch files layered over the game -> {src}")
+        # overlay0 (our own files, same layout as app0: e.g. NOVA_FileList_Vita_movie.cpk with the burned-in subtitles removed,
+        # later the English/Arabic text archives): layered over the game (and its update), after any rePatch. Not used when
+        # RECOMP_NO_OVERLAY=1. Files are hard-linked, never written into: the sources stay as they are.
+        ov = os.path.join(W, "overlay0")
+        if os.path.isdir(ov) and not ENV.get("RECOMP_NO_OVERLAY"):
+            run([PY, os.path.join(R, "packs.py"), "layer", src, ov, os.path.join(W, "app0_overlay")], env=env_with(TOOLS_ENV))
+            src = os.path.join(W, "app0_overlay"); say(f"{g.T}: overlay0 files layered over the game -> {src}")
     os.makedirs(os.path.join(W, "elf"), exist_ok=True); os.makedirs(os.path.join(OUT, "fs"), exist_ok=True)
     app0 = os.path.join(OUT, "fs", "app0")
     if os.path.isfile(os.path.join(src, "eboot.bin.elf")):   # decrypted on this machine (add): each ELF beside its SELF, and the whole app0 (sce_sys too) read in place
