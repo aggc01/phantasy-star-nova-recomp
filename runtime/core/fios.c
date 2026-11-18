@@ -172,9 +172,12 @@ static int64_t do_read(uint32_t fh, uint32_t buf, int64_t len, int64_t off, int 
 		return n;
 	}
 	uint64_t t0 = fios_now_us();
+	extern void gfx_guest_replacing(uint32_t addr, uint32_t len), gfx_guest_replaced(uint32_t addr, uint32_t len);   /* (gfx.h: a freed render target under the read must not come down over it later) */
+	gfx_guest_replacing(buf, (uint32_t)len);
 	gwatch_write_begin(buf, (uint32_t)len);   /* a read(2) into a page the texture watch made read-only fails (EFAULT) instead of faulting: open it first */
 	ssize_t n = at ? pread(h->fd - 1, G(buf), (size_t)len, (off_t)off) : read(h->fd - 1, G(buf), (size_t)len);
 	gwatch_write_end(buf, (uint32_t)len);
+	if (n > 0) gfx_guest_replaced(buf, (uint32_t)n);
 	io_read_note(n, fios_now_us() - t0, 0);   /* RECOMP_HITCH_LOG's per-frame read stats (io.c) */
 	static int dbg = -1; if (dbg < 0) dbg = getenv("RECOMP_FIOS_DEBUG") != 0;
 	if (dbg) fprintf(stderr, "    fios read fh %u len %lld off %lld -> %zd\n", fh, (long long)len, (long long)off, n);

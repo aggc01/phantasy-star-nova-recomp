@@ -431,11 +431,16 @@ int audio_open(uint32_t freq, uint32_t channels, uint32_t samples);
 void audio_output(int dev, const void *buf, uint32_t bytes);
 static uint64_t port_next[8];
 static uint32_t port_vol[8][2];   /* sceAudioOutSetVolume: 0..0x8000 (SCE_AUDIO_VOLUME_0DB) per channel */
+/* a released port's host device, kept (there's no host close): the next open of that slot with the same rate, channels
+ * and buffer length takes it back instead of opening another */
+static uint32_t port_dev_fmt[8][3]; static int port_dev_kept[8];
 static void h_audio_open(Cpu *c) {   /* (type, samples per buffer, frequency, mode) */
 	for (int i = 0; i < 8; i++) if (!port_len[i]) {
 		port_len[i] = A1; port_freq[i] = A2 ? A2 : 48000; port_ch[i] = A3 == 0 ? 1 : 2;   /* mode 0 mono, 1 stereo */
 		port_vol[i][0] = port_vol[i][1] = 0x8000;
-		port_dev[i] = audio_open(port_freq[i], port_ch[i], A1);
+		if (port_dev_kept[i] && port_dev_fmt[i][0] == port_freq[i] && port_dev_fmt[i][1] == port_ch[i] && port_dev_fmt[i][2] == A1) port_dev_kept[i] = 0;
+		else port_dev[i] = audio_open(port_freq[i], port_ch[i], A1);
+		port_dev_fmt[i][0] = port_freq[i]; port_dev_fmt[i][1] = port_ch[i]; port_dev_fmt[i][2] = A1;
 		fprintf(stderr, "    audio port %d: %u samples at %u Hz, mode %u\n", i, A1, A2, A3);
 		RET(i + 1); return;
 	}
@@ -460,6 +465,15 @@ static void wav_write(uint32_t i, const void *pcm) {
 	uint32_t riff = bytes[i] + 36;
 	off_t at = ftello(f[i]); fseeko(f[i], 4, SEEK_SET); fwrite(&riff, 4, 1, f[i]); fseeko(f[i], 40, SEEK_SET); fwrite(&bytes[i], 4, 1, f[i]); fseeko(f[i], at, SEEK_SET);   /* (64-bit offsets: Windows' long ftell stops at 2 GB) */
 	fflush(f[i]);
+}
+/* sceAudioOutReleasePort (port): the slot free for another open (Phantasy Star Nova releases its ports; stubbed, a game
+ * that reopened ran out of the eight) */
+static void h_audio_release(Cpu *c) {
+	uint32_t i = A0 - 1;
+	if (i >= 8 || !port_len[i]) { RET(0x80260003u); return; }   /* SCE_AUDIO_OUT_ERROR_INVALID_PORT */
+	port_len[i] = 0; port_next[i] = 0; port_dev_kept[i] = 1;
+	fprintf(stderr, "    audio port %u released\n", i);
+	RET(0);
 }
 /* (port, SCE_AUDIO_VOLUME_FLAG_L_CH 1 | R_CH 2, const int vol[2]): Killzone sets its ports' volume
  * at start-up and from the options menu */
@@ -502,6 +516,48 @@ static void audio_wait_guest(uint32_t i, uint64_t len) {
 	pthread_mutex_unlock(&vclock_m);
 	if (b) sched_block_end();
 }
+/* ---- RECOMP_VIDEO_DIR=<dir>: a gameplay recording, the sound half (gfx_gpu.c video_frame has the picture;
+ * dev/psnova/make_video.py makes the MP4). Every buffer the game outputs, raw, with the host time it was handed over
+ * (after the hardware-like wait for the buffer before: when it starts to sound) and its port's volume:
+ * audio.txt "<port> <us> <offset> <bytes> <rate> <channels> <volL> <volR>", the PCM in audio_<port>.raw. The clock is
+ * the host's raw monotonic one (video_clock_us), the frames' too, so the two line up. */
+const char *video_dir(void) {
+	static const char *d = (const char *)1;
+	if (d == (const char *)1) { d = getenv("RECOMP_VIDEO_DIR"); if (d && !*d) d = 0; if (d) mkdir(d, 0755); }
+	return d;
+}
+uint64_t video_clock_us(void) { return raw_us(); }
+/* RECOMP_VIDEO_RANGES="a-b,c-d,...": record only over those presented frames (the picture and the sound alike; unset:
+ * every frame) -- a long scripted run kept to its interesting stretches instead of gigabytes of loading */
+int video_on(void) {
+	static const char *r = (const char *)1; if (r == (const char *)1) r = getenv("RECOMP_VIDEO_RANGES");
+	if (!video_dir()) return 0;
+	if (!r || !*r) return 1;
+	const uint64_t f = frames;
+	for (const char *q = r; *q; ) {
+		unsigned long a = strtoul(q, (char **)&q, 10), z = a;
+		if (*q == '-') z = strtoul(q + 1, (char **)&q, 10);
+		if (f >= a && f <= z) return 1;
+		if (*q == ',') q++; else break;
+	}
+	return 0;
+}
+static void video_audio(uint32_t i, const void *pcm) {
+	const char *d = video_dir(); if (!d || !pcm || !video_on()) return;
+	static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER; static FILE *txt, *raw[8]; static uint64_t off[8]; static unsigned n;
+	const uint32_t bytes = port_len[i] * port_ch[i] * 2; const uint64_t t = raw_us();
+	pthread_mutex_lock(&m);
+	char p[1024];
+	if (!txt) { snprintf(p, sizeof p, "%s/audio.txt", d); txt = fopen(p, "w"); }
+	if (!raw[i]) { snprintf(p, sizeof p, "%s/audio_%u.raw", d, i); raw[i] = fopen(p, "wb"); }
+	if (txt && raw[i]) {
+		fwrite(pcm, 1, bytes, raw[i]);
+		fprintf(txt, "%u %llu %llu %u %u %u %u %u\n", i, (unsigned long long)t, (unsigned long long)off[i], bytes, port_freq[i], port_ch[i], port_vol[i][0], port_vol[i][port_ch[i] == 2 ? 1 : 0]);
+		off[i] += bytes;
+		if (++n % 64 == 0) { fflush(txt); for (int k = 0; k < 8; k++) if (raw[k]) fflush(raw[k]); }   /* (a run stopped from outside keeps what it had) */
+	}
+	pthread_mutex_unlock(&m);
+}
 static void h_audio_output(Cpu *c) {   /* (port, buffer) */
 	uint32_t i = A0 - 1;
 	if (i >= 8 || !port_len[i]) { RET(0x80260003u); return; }
@@ -519,6 +575,7 @@ static void h_audio_output(Cpu *c) {   /* (port, buffer) */
 			}
 		}
 		if (clock_fixed()) audio_wait_guest(i, (uint64_t)port_len[i] * 1000000 / port_freq[i]);
+		if (A1) video_audio(i, G(A1));
 		RET(0); return;
 	}
 	if (getenv("RECOMP_AUDIO_STATS") && A1) {   /* how loud the buffers are (silent while NGS is missing?) */
@@ -532,6 +589,7 @@ static void h_audio_output(Cpu *c) {   /* (port, buffer) */
 	if (!port_next[i] || port_next[i] + len < t) port_next[i] = t;
 	if (port_next[i] > t) { int b = sched_block_begin(); usleep((useconds_t)(port_next[i] - t)); if (b) sched_block_end(); }
 	port_next[i] += len;
+	if (A1) video_audio(i, G(A1));
 	RET(0);
 }
 
@@ -666,9 +724,22 @@ static int play_motion(float a[3], float g[3], float q[4]) {   /* the latest rec
  * (window_input_pad2); every other read gets the handheld's (window_input) */
 static void ctrl_peek(Cpu *c, int pad2) {   /* (port, SceCtrlData *, count): timestamp, buttons, sticks centred */
 	input_rec_init();
+	{	/* RECOMP_CTRL_BACKTRACE=1: the native stack of the first read from each caller -- recompiled guest functions are C
+		 * functions, so it is the guest's call chain (fn_XXXXXXXX after llvm-nm on the program): who polls the pad, and
+		 * from what loop (Phantasy Star Nova's main pad device was read once, at frame 0, 2026-11-18) */
+		static int on = -1; static uint32_t seen[16]; static int nseen;
+		if (on < 0) on = getenv("RECOMP_CTRL_BACKTRACE") != 0;
+		if (on) { int k; for (k = 0; k < nseen && seen[k] != c->r[14]; k++) {} if (k == nseen && nseen < 16) {
+			seen[nseen++] = c->r[14]; extern void plat_backtrace(FILE *); fprintf(stderr, "    ctrl backtrace: port %u lr %#x frame %llu\n", A0, c->r[14], (unsigned long long)frames); plat_backtrace(stderr); } }
+	}
 	for (uint32_t i = 0; i < A2; i++) {
-		uint32_t p = A1 + 64 * i;
-		memset(G(p), 0, 64);
+		/* SceCtrlData is 0x20 bytes (timeStamp 8, buttons 4, sticks 4, up..square 12, reserved 4: the SDK's, and the game
+		 * frames say the same -- Phantasy Star Nova keeps it at sp+0 under its stack canary at sp+0x24). This wrote 64 a
+		 * sample: 32 bytes past every buffer, zeroing the caller's canary (unnoticed: __stack_chk_guard is left 0) and its
+		 * saved registers. Phantasy Star Nova's input thread lost its object pointer (r5) after its first read and never
+		 * polled the pad again -- every button ignored (2026-11-18); the other games' frames happened to survive it */
+		uint32_t p = A1 + 0x20 * i;
+		memset(G(p), 0, 0x20);
 		WR64(p, guest_time_us());
 		extern void window_input(uint32_t *b, uint8_t s[4]); extern void window_input_pad2(uint32_t *b, uint8_t s[4]);
 		uint32_t b; uint8_t st[4];
@@ -959,7 +1030,7 @@ const HleEntry hle_display[] = {
 	{"sceDisplayWaitVblankStartCB", h_wait_vblank_cb}, {"sceDisplayWaitVblankStartMultiCB", h_wait_vblank_multi_cb},
 	{"sceDisplayWaitSetFrameBufCB", h_wait_setbuf_cb}, {"sceDisplayWaitSetFrameBufMultiCB", h_wait_setbuf_multi_cb},
 	{"sceDisplayRegisterVblankStartCallback", h_register_vblank_cb}, {"sceDisplayUnregisterVblankStartCallback", h_unregister_vblank_cb},
-	{"sceAudioOutOpenPort", h_audio_open}, {"sceAudioOutOutput", h_audio_output}, {"sceAudioOutSetVolume", h_audio_set_volume},
+	{"sceAudioOutOpenPort", h_audio_open}, {"sceAudioOutOutput", h_audio_output}, {"sceAudioOutSetVolume", h_audio_set_volume}, {"sceAudioOutReleasePort", h_audio_release},
 	{"sceCtrlPeekBufferPositive", h_ctrl_peek}, {"sceTouchPeek", h_touch_peek},
 	{"sceCtrlReadBufferPositive", h_ctrl_read}, {"sceTouchRead", h_touch_read}, {"sceTouchGetPanelInfo", h_touch_panel_info},
 	/* the "2" reads (Killzone 1.12): the same SceCtrlData, on a handheld only from port 0 -- the PS TV's paired pads are ports 1-4,

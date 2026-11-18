@@ -23,3 +23,9 @@ tools/
 toolchain/
 *.PUP
 *.pup
+
+# Phantasy Star Nova: stage logs of dev/psn_build_all.sh (local)
+dev/psn-logs/
+# ... and pictures of the game (screenshots, atlases rendered from its files): the game's own imagery stays local
+docs/psnova/*.png
+dev/psnova/rmd/samples/

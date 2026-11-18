@@ -39,4 +39,8 @@ uint64_t plat_now_us(void);                              /* a monotonic microsec
 void plat_random(void *buf, size_t n);                   /* n unpredictable bytes (an install's own ids: apputil.c's console id) */
 void plat_sleep_ns(uint64_t ns);                         /* as precise as the platform allows (Windows: a high-resolution waitable timer, not Sleep's 1-16 ms) */
 
+/* the GPU driver's shader disk cache in a folder of this build's own, before the first Vulkan call (Windows: NVIDIA keeps one
+ * 1 GiB cache per exe NAME and every game's program is game_host.exe; elsewhere nothing) */
+void plat_gpu_cache_private(void);
+
 #endif

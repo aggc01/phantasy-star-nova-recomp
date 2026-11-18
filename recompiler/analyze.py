@@ -612,6 +612,7 @@ def analyse(elf, out, compare=None, base=None, link=(), var_base=VAR_BASE):
     # code pointers: aligned words anywhere in the image, and movw/movt constant pairs in the code
     stub_set = stubs
     word_seeds = set()   # seen only as a word in the image: the weakest evidence
+    even_words = set()   # 4-aligned words into .text: ARM code pointers, or data (arm_pointer_targets tells them apart)
     for base, buf in m.mem.items():
         for o in range((-base) % 4, len(buf) - 3, 4):
             v, = struct.unpack_from("<I", buf, o)
@@ -619,6 +620,8 @@ def analyse(elf, out, compare=None, base=None, link=(), var_base=VAR_BASE):
                 if v & 1:
                     seeds.append((v & ~1, False))
                     word_seeds.add(v & ~1)
+                elif not v & 3:
+                    even_words.add(v)
     for o in range(0, len(an.code) - 8, 2):
         hw1, hw2, hw3, hw4 = struct.unpack_from("<HHHH", an.code, o)
         if (hw1 & 0xfbf0) == 0xf240 and (hw3 & 0xfbf0) == 0xf2c0 and (hw2 >> 8 & 0xf) == (hw4 >> 8 & 0xf):
@@ -641,6 +644,7 @@ def analyse(elf, out, compare=None, base=None, link=(), var_base=VAR_BASE):
             if len(p) == 2:
                 a = int(p[0], 16) + (int(sbase, 16) if sbase else 0)
                 if an.in_text(a): run_seeds.append((a, p[1] == "arm"))
+    run_seeds = [(a, arm or (not a & 3 and a in even_words and arm_function_at(an, a))) for a, arm in run_seeds]   # (see arm_function_at)
     strong = {a & ~1 for _, _, a in m.exports()}   # entries something calls or exports (not just a pointer to)
     jumped = set()   # addresses some function branches to internally
     todo = list(dict.fromkeys(list(seeds) + run_seeds))
@@ -653,6 +657,10 @@ def analyse(elf, out, compare=None, base=None, link=(), var_base=VAR_BASE):
         # functions nothing visibly references (called through computed addresses): prologues
         # (push {..., lr}) in the code no function covers
         found = [g for g in prologues(an, bodies) if g[0] not in tried]
+        if not found:   # then ARM functions only an even word points to (leaves: no prologue for the scan above)
+            found = [g for g in arm_pointer_targets(an, bodies, even_words) if g[0] not in tried]
+            if found:
+                print(f"{len(found)} ARM functions reached only through ARM code pointers (even words) in the image")
         if not found:
             break
         gaps = [a for a, arm in found]
@@ -684,6 +692,38 @@ def analyse(elf, out, compare=None, base=None, link=(), var_base=VAR_BASE):
     json.dump({"blocks": blocks, "functions": functions, "bodies": bodies, "relocs": [], "module": m.name,
                "exports": exports, "variables": variables, "arm": arm_entries}, open(out, "w"))
     report(m, entries, stubs, var_names, bodies, blocks, functions, out, compare)
+
+
+def arm_function_at(an, v):
+    """v starts an ARM function: not text (the word's four bytes printable ASCII: strings in .text decode as ARM with
+    conditions cs/cc/mi/pl/vs/vc from their letters), its first instruction unconditional, nothing a Vita program never
+    contains (junk, user-mode ldm/stm `^`), and an unconditional return or branch (bx lr, pop/ldm with pc, b) within 64
+    instructions. (The first version also refused a conditional second instruction, which lost 0x822b0d6c: `cmp r1, #0;
+    beq ...`, a switch in character creation that crashed the game on 2026-11-18.)"""
+    w = an.word(v)
+    if w is None or all(0x20 <= (w >> (8 * k)) & 0xff < 0x7f for k in range(4)):
+        return False
+    x = v
+    for k in range(64):
+        i = an.insn(x, True)
+        if i is None or i.size != 4 or Analyser.junk(i) or "^" in i.op_str or (k == 0 and an.cond(i)):
+            return False
+        if not an.cond(i) and ((i.id == A.ARM_INS_BX and i.op_str == "lr") or (i.id in LDM and "pc" in i.op_str) or i.id == A.ARM_INS_B):
+            return True
+        x += 4
+    return False
+
+
+def arm_pointer_targets(an, bodies, words):
+    """even words in the image that land on code no body covers and decode as an ARM function (arm_function_at), as
+    (address, True). Phantasy Star Nova's vtables of ARM methods hold such pointers (blx to an even address enters ARM):
+    accessors and switches with no prologue for prologues() and no Thumb bit for the word seeds"""
+    los = sorted((lo, hi) for lo, hi, *_ in bodies if an.in_text(lo))
+    starts = [lo for lo, _ in los]
+    def covered(a):
+        k = bisect.bisect_right(starts, a) - 1
+        return k >= 0 and los[k][0] <= a <= los[k][1]
+    return [(v, True) for v in sorted(words) if not covered(v) and arm_function_at(an, v)]
 
 
 def prologues(an, bodies):

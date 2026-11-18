@@ -397,6 +397,20 @@ class Fn:
             return [f"c->r[14] = 0x{nxt | self.tbit:x}u; {{ RecompJmp *rj = recomp_setjmp_begin(c); if (!_setjmp(rj->host)) c->r[0] = 0; }} if (c->stop) return;"]
         return [f"c->r[14] = 0x{nxt | self.tbit:x}u; recomp_call_external(c, 0x{target:x}u); if (c->stop) return;"]
 
+    def tail(self, target, nxt):
+        """b / cbz into another function: a branch, so lr keeps what the code put there (an ARM b never writes it).
+        This used to go through call() and set lr to the branch's next address: Phantasy Star Nova's fn_815cf358 keeps
+        a tree node in lr (ldr.w lr, [r8, #4]) and branches to 0x815cf8dc -- an entry the analysis made from the bytes of
+        a strb.w that read as a Thumb pointer -- whose first instruction is mov r8, lr; r8 became 0x815cf8b7 and the
+        game's next std::map insert got 0x815cf8e3 as its tree: abort() after "Start the Game" (2026-11-18). A
+        computed jump (ldr pc / bx rN) never set lr; now no tail jump does."""
+        t = target & ~1
+        if t in self.entries:
+            return [f"fn_{t:08x}(c); if (c->stop) return;"]
+        if t in SETJMP_STUBS:
+            return self.call(target, nxt)
+        return [f"recomp_call_external(c, 0x{target:x}u); if (c->stop) return;"]
+
     def branch(self, i, mn, ops):
         nxt = i.address + i.size
         cc = i.cc
@@ -404,15 +418,15 @@ class Fn:
             t = ops[0].imm & 0xffffffff
             if t in self.addrs:
                 body = [f"goto L_{t:08x};"]
-            else:   # a tail call into another function
-                body = self.call(t, nxt) + ["return;"]
+            else:   # a tail call into another function (lr untouched: tail() above)
+                body = self.tail(t, nxt) + ["return;"]
             return body if cc == 15 else [f"if (COND(c, {cc})) {{"] + body + ["}"]
         if mn in ("cbz", "cbnz"):
             r, t = self.r(ops[0].reg, i), ops[1].imm & 0xffffffff
             test = f"{r} {'==' if mn == 'cbz' else '!='} 0"
             if t in self.addrs:
                 return [f"if ({test}) goto L_{t:08x};"]
-            return [f"if ({test}) {{"] + self.call(t, nxt) + ["return; }"]
+            return [f"if ({test}) {{"] + self.tail(t, nxt) + ["return; }"]
         if mn == "bl" or (mn == "blx" and ops[0].type == ARM_OP_IMM):
             body = self.call(ops[0].imm & 0xffffffff, nxt)
             return body if cc == 15 else [f"if (COND(c, {cc})) {{"] + body + ["}"]
@@ -588,6 +602,30 @@ class Fn:
             d, q0 = regs[0][1], 2 * regs[1][1]
             return [f"{{ {ty} a[{16 // es}]; {oty} o[{16 // es}]; memcpy(a, &c->vfp.d[{q0}], 16); for (int k = 0; k < {16 // es}; k++) o[k] = ({oty})a[k];"
                     f" memcpy(&c->vfp.d[{d}], o, 8); }}"]
+        if mn in ("vqmovn", "vqmovun") and dt in ("s16", "s32", "s64", "u16", "u32", "u64") and regs[0][0] == "d" and regs[1][0] == "q":
+            # saturating narrow: each element of qM clamped to the half width (vqmovun: a signed source into an unsigned
+            # result), FPSCR.QC set when any element was clamped (CRI ADX2's mixer turns its 32-bit mix into 16-bit PCM)
+            es = int(dt[1:]) // 8; hb = 4 * es
+            src_signed = dt[0] == "s"
+            sty = f"{'' if src_signed else 'u'}int{8 * es}_t"
+            out_signed = src_signed and mn == "vqmovn"
+            oty = f"{'' if out_signed else 'u'}int{hb}_t"
+            lo, hi = (-(1 << (hb - 1)), (1 << (hb - 1)) - 1) if out_signed else (0, (1 << hb) - 1)
+            sfx = "LL" if es == 8 else ""
+            lo_c = f"if (v < {lo}{sfx}) {{ v = {lo}{sfx}; qc = 1; }} else " if src_signed else ""
+            hi_c = f"{hi}{'ULL' if es == 8 and not src_signed else sfx}"
+            d, q0, n = regs[0][1], 2 * regs[1][1], 16 // es
+            return [f"{{ {sty} a[{n}]; {oty} o[{n}]; int qc = 0; memcpy(a, &c->vfp.d[{q0}], 16);"
+                    f" for (int k = 0; k < {n}; k++) {{ {sty} v = a[k]; {lo_c}if (v > {hi_c}) {{ v = {hi_c}; qc = 1; }} o[k] = ({oty})v; }}"
+                    f" memcpy(&c->vfp.d[{d}], o, 8); if (qc) c->fpscr |= 0x08000000u; }}"]
+        if mn == "vzip" and dt in ("8", "16", "32") and len(regs) == 2 and regs[0][0] == regs[1][0]:
+            # interleave: the elements of D and M taken in turn, the first half of that sequence into D and the rest into M
+            # (CRI ADX2's stereo mixer); the inverse of vuzp above
+            (a0, cnt), (b0, _) = dbytes(regs[0]), dbytes(regs[1])
+            es, nb = int(dt) // 8, 8 * cnt
+            return [f"{{ uint8_t x[16], y[16], o[32]; memcpy(x, &c->vfp.d[{a0}], {nb}); memcpy(y, &c->vfp.d[{b0}], {nb});"
+                    f" for (int e = 0; e < {nb // es}; e++) {{ memcpy(o + 2 * e * {es}, x + e * {es}, {es}); memcpy(o + (2 * e + 1) * {es}, y + e * {es}, {es}); }}"
+                    f" memcpy(&c->vfp.d[{a0}], o, {nb}); memcpy(&c->vfp.d[{b0}], o + {nb}, {nb}); }}"]
         if mn == "vmovl" and dt in ("u8", "s8", "u16", "s16", "u32", "s32") and regs[0][0] == "q" and regs[1][0] == "d":
             es = int(dt[1:]) // 8
             ty, oty = {("u", 1): ("uint8_t", "uint16_t"), ("s", 1): ("int8_t", "int16_t"), ("u", 2): ("uint16_t", "uint32_t"),
@@ -1027,11 +1065,17 @@ class Fn:
             fill = "(uint64_t)((int64_t)v >> 63)" if dt == "s64" else "0"
             return [f"{{ int8_t sh = (int8_t)c->vfp.d[{b}]; uint64_t v = c->vfp.d[{a}];"
                     f" c->vfp.d[{d}] = sh >= 64 ? 0 : sh <= -64 ? {fill} : sh >= 0 ? v << sh : (uint64_t)({sr}v >> -sh); }}"]
-        if mn == "vshr" and dt in ("u64", "s64") and regs[0][0] == "d" and ops[2].type == ARM_OP_IMM:
-            d, a, n = regs[0][1], regs[1][1], ops[2].imm
-            if dt == "s64":
-                return [f"c->vfp.d[{d}] = (uint64_t)((int64_t)c->vfp.d[{a}] >> {min(n, 63)});"]
-            return [f"c->vfp.d[{d}] = {'0' if n >= 64 else f'c->vfp.d[{a}] >> {n}'};"]
+        if mn == "vshr" and dt in ("u64", "s64") and regs[0][0] in "dq" and ops[2].type == ARM_OP_IMM:
+            # per 64-bit lane of a d or q register (q: two lanes, both read before either is written)
+            cnt = 2 if regs[0][0] == "q" else 1
+            d0, a0 = (2 * regs[0][1], 2 * regs[1][1]) if cnt == 2 else (regs[0][1], regs[1][1])
+            n = ops[2].imm
+            def sh64(a):
+                if dt == "s64":
+                    return f"(uint64_t)((int64_t)c->vfp.d[{a}] >> {min(n, 63)})"
+                return "0" if n >= 64 else f"(c->vfp.d[{a}] >> {n})"
+            return ["{ " + " ".join(f"uint64_t t{k} = {sh64(a0 + k)};" for k in range(cnt)) + " "
+                    + " ".join(f"c->vfp.d[{d0 + k}] = t{k};" for k in range(cnt)) + " }"]
         if mn in ("vsra", "vrshr", "vrsra") and dt in ("u64", "s64") and ops[2].type == ARM_OP_IMM:
             # 64-bit lanes shifted right by 1..64 (vrshr/vrsra round by the last bit shifted out,
             # vsra/vrsra add to the destination), per d of a d or q register
@@ -1108,14 +1152,14 @@ class Fn:
                     else:
                         out.append(f" memcpy(G(ea + {es * k}), {p_} + {lane * es}, {es});")
                 post = [o for o in ops if o.type == ARM_OP_REG and md.reg_name(o.reg) in GPR and o is not ops[0]]
-                if i.writeback:   # one element transferred either way
+                if i.writeback or post:   # one element transferred either way; capstone leaves writeback unset for a post-increment register ([rN], rM: the Luufen fork's dfc075d; Nova's CRI mixer stores 8 rows that way at 0x819fbea4)
                     out.append(f" c->r[{base}] = ea + {es if alld else es * len(ds)};" if not post else f" c->r[{base}] = ea + {self.r(post[-1].reg, i)};")
                 out.append(" }")
                 return ["".join(out)]
             for k, dn in enumerate(ds):
                 out.append(f" c->vfp.d[{dn}] = RD64(ea + {8 * k});" if mn == "vld1" else f" WR64(ea + {8 * k}, c->vfp.d[{dn}]);")
             post = [o for o in ops if o.type == ARM_OP_REG and md.reg_name(o.reg) in GPR and o is not ops[0]]
-            if i.writeback:
+            if i.writeback or post:   # (capstone leaves writeback unset for a post-increment register: [rN], rM)
                 out.append(f" c->r[{base}] = ea + {8 * len(ds)};" if not post else f" c->r[{base}] = ea + {self.r(post[-1].reg, i)};")
             out.append(" }")
             return ["".join(out)]
@@ -1270,17 +1314,42 @@ def main():
     for f in fns:
         if junk(f.insns) and not junk(decode(fspans[f.entry], True)):
             todo.append(f.entry)
+    kept_thumb = []
     while todo:
         e = todo.pop()
         if e in arm or e not in by_entry:
             continue
-        arm.add(e)
         f = Fn(e, decode(fspans[e], True), eset, arm=True)
+        # an ARM decode with no instruction at the entry itself can't be the function's: Thumb bytes read as ARM
+        # (Phantasy Star Nova: entries that share a Thumb switch's tail, whose spans start below the entry with a
+        # literal pool the junk test above takes for coprocessor code) -- keep it Thumb, which has the entry
+        if e not in f.addrs:
+            kept_thumb.append(e)
+            continue
+        arm.add(e)
         by_entry[e] = f
         todo += [t for t in calls(f, "bl") if t in by_entry]
     fns = [by_entry[f.entry] for f in fns]
     if arm:
         print(f"{len(arm)} ARM-mode functions")
+    if kept_thumb:
+        print(f"{len(kept_thumb)} functions kept Thumb (their ARM decode has no instruction at the entry): " + " ".join(f"{a:#x}" for a in sorted(kept_thumb)[:12]))
+    # an entry that falls inside an instruction of its own linear decode (a chunk shared with the function below it,
+    # decoded from below: Phantasy Star Nova's 0x819b2852 is the second half of a bne.w, 0x811cc1f6 of a movt -- entries the
+    # analysis took from words that look like code pointers; ordinary code never jumps there): decoded from the entry
+    # itself to the end of its span, plus the spans above it, so it compiles; what a jump there would run, were one made
+    redecoded = []
+    for k, f in enumerate(fns):
+        if f.insns and f.entry not in f.addrs and f.entry in fspans:
+            sp = next(((lo, hi) for lo, hi in fspans[f.entry] if lo <= f.entry <= hi), None)
+            if sp is None:
+                continue
+            nf = Fn(f.entry, decode([(f.entry, sp[1])] + [(lo, hi) for lo, hi in fspans[f.entry] if lo > sp[1]], f.arm), eset, arm=f.arm)
+            if f.entry in nf.addrs:
+                fns[k] = by_entry[f.entry] = nf
+                redecoded.append(f.entry)
+    if redecoded:
+        print(f"{len(redecoded)} entries inside an instruction of their own decode, decoded from the entry: " + " ".join(f"{a:#x}" for a in sorted(redecoded)[:12]))
     # code reached only through a pointer (a callback the module installs for itself) can sit inside
     # what Ghidra made one function: any Thumb code pointer in the image's words that lands on an
     # instruction of a function, not at its entry, gets its own entry (that function, entered there)

@@ -1,0 +1,30 @@
+# Phantasy Star Nova (PCSG00351, JP; the format: pipeline/packconf.py). Only facts about the game; nothing of its code
+# or data. The main program is NovaMRom (eboot.bin, 28 MB as ELF). Its data is CRI CPK archives read through sceIo
+# (no SceFios2 import); movies through SceAvPlayer; sound through NGS (ATRAC9 voices) and sceAudioOut.
+NAME = "Phantasy Star Nova"
+# REGION: the release this pack plays (content id JP0177-PCSG00351_00-NOVAAPPLICATION0, Japan). The player's copy may
+# carry a rePatch folder (an English fan translation that replaces NOVA_FileList_Vita_patch.cpk and _movie.cpk): see
+# docs/psnova/README.md for how it is layered.
+REGION = "JP"
+SPLIT = 100               # ~3x Uncharted's main program (28 MB against 9.5 MB as ELF)
+# libscemp4 + libsceavplayer: the firmware's MP4 demuxer and movie player behind the game's SceAvPlayer movies (H.264
+# decoded by runtime/media/video.c), as for Killzone. The game's sce_module also has libfios2, libult, libface and
+# libsmart: the main program imports from none of them (sceKernelLoadStartModule is answered by the runtime), so they
+# are not loaded, as with Killzone's identical set.
+MODULES = "libc libgxm_es4 libgpu_es4 libscemp4 libsceavplayer"
+RUN_ENV = ""   # play: the GPU renderer, the real clock
+TEST_ENV = "RECOMP_GFX=soft RECOMP_CLOCK=fixed"   # the gate's reference: software renderer, fixed clock. Not RECOMP_SKIP_MOVIES: with the movies skipped (AvPlayer answering "no stream") the title never took Start (2026-11-18); the movies decode fine through the firmware's AvPlayer
+# REPATCH_KEEP: the English rePatch's NOVA_FileList_Vita_patch.cpk replaces the 1.05 update's whole archive and lacks
+# one entry the update added (tex_nova_ui_common.aif, in no other archive): without it the game drew noise on Filldia
+# and its NOW LOADING screen. import builds the rePatch archive plus that entry (vitarecomp.py repatch_keep, 2026-11-18).
+REPATCH_KEEP = "NOVA_FileList_Vita_patch.cpk:tex_nova_ui_common.aif"
+TEST_FRAMES = 1200
+TEST_TIMEOUT = 600
+
+# 1.05, the update as installed over 1.00 (the copy in F:\RECOMP GAMES\Phantasy Star Nova (v1.05)\patch); 1.00's
+# eboot.bin.elf is f4b3a669b53cf5ac8a2ecb26b3686011011129d8db7930c88a578e1463592542 (not played).
+[versions."1.05"]
+sha256 = "abb45e179726d3021de144a900f912534fa6879061e068228cc0cd55286edcf3"
+status = "recommended"
+HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert"   # diagnostics (hooks.c): the pad device's update (RECOMP_PSN_INPUT_TRACE=1); the map insert that aborts after Start the Game
+IHOOKS = "0x81a1f284:psn_input_slot"   # diagnostics: each device slot the input thread's loop loads

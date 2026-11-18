@@ -41,6 +41,13 @@
 #include "usse.h"
 #include "platform.h"
 
+/* gfx_gpu.c's gameplay recorder (RECOMP_VIDEO_DIR) reaches into display.c and media/jpeg.c, which a replay doesn't link:
+ * never recording here */
+const char *video_dir(void) { return 0; }
+int video_on(void) { return 0; }
+uint64_t video_clock_us(void) { return 0; }
+int stbi_write_jpg_to_func(void (*func)(void *, void *, int), void *context, int x, int y, int comp, const void *data, int quality) { (void)func; (void)context; (void)x; (void)y; (void)comp; (void)data; (void)quality; return 0; }
+
 uint8_t *recomp_mem;
 
 /* what the graphics code expects from the rest of the host */

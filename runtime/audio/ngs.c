@@ -26,11 +26,13 @@
 #include "third_party/libatrac9/libatrac9.h"   /* MIT, vendored unmodified */
 
 
-enum { DEF_MASTER = 1, DEF_SIMPLE, DEF_REVERB, DEF_OTHER, DEF_SCREAM, DEF_SCREAM_AT9, DEF_COMPRESSOR, DEF_SIDECHAIN };
+enum { DEF_MASTER = 1, DEF_SIMPLE, DEF_REVERB, DEF_OTHER, DEF_SCREAM, DEF_SCREAM_AT9, DEF_COMPRESSOR, DEF_SIDECHAIN,
+       DEF_MIXER, DEF_EQ, DEF_DELAY, DEF_DISTORTION, DEF_PITCHSHIFT };
 /* a bus that passes what reaches it through (no dynamics yet): the compressor, and the side-chain
  * compressor -- the same with a second input (1) carrying the key signal that drives its gain
- * reduction, which is never part of its output */
-#define PASS_BUS(d) ((d) == DEF_COMPRESSOR || (d) == DEF_SIDECHAIN)
+ * reduction, which is never part of its output. Phantasy Star Nova's CRI ADX2 routes through the mixer, EQ, delay,
+ * distortion and pitch-shift busses too: passed through as well (their effects not modelled yet; said once each) */
+#define PASS_BUS(d) ((d) == DEF_COMPRESSOR || (d) == DEF_SIDECHAIN || ((d) >= DEF_MIXER && (d) <= DEF_PITCHSHIFT))
 /* voices whose module 0 is a PCM player (the simple voice FMOD uses; Sony's Scream library's) */
 #define PCM_PLAYER(d) ((d) == DEF_SIMPLE || (d) == DEF_SCREAM)
 #define PLAYER_VOICE(d) (PCM_PLAYER(d) || (d) == DEF_SCREAM_AT9)   /* a voice that plays data and can finish */
@@ -320,9 +322,24 @@ static void h_def_scream(Cpu *c) { RET(defn(DEF_SCREAM)); }
 static void h_def_scream_at9(Cpu *c) { RET(defn(DEF_SCREAM_AT9)); }
 static void h_def_compressor(Cpu *c) { RET(defn(DEF_COMPRESSOR)); }
 static void h_def_sidechain(Cpu *c) { RET(defn(DEF_SIDECHAIN)); }
+/* Phantasy Star Nova (CRI ADX2 on NGS): the ATRAC9 voice (module 0 the ATRAC9 player, the same parameter block as the
+ * Scream ATRAC9 voice's), Template1 (module 0 the PCM/ADPCM player, as the simple voice's) and five more busses. Stubbed
+ * (null definitions: silent DEF_OTHER voices that never finish) */
+static void def_note(const char *what) { static unsigned said; unsigned bit = 1u << (what[0] & 15); if (!(said & bit)) { said |= bit; fprintf(stderr, "    ngs: %s bus passes its input through (its effect isn't modelled)\n", what); } }
+static void h_def_at9(Cpu *c) { RET(defn(DEF_SCREAM_AT9)); }
+static void h_def_template1(Cpu *c) { RET(defn(DEF_SIMPLE)); }
+static void h_def_mixer(Cpu *c) { RET(defn(DEF_MIXER)); }
+static void h_def_eq(Cpu *c) { def_note("EQ"); RET(defn(DEF_EQ)); }
+static void h_def_delay(Cpu *c) { def_note("delay"); RET(defn(DEF_DELAY)); }
+static void h_def_distortion(Cpu *c) { def_note("distortion"); RET(defn(DEF_DISTORTION)); }
+static void h_def_pitchshift(Cpu *c) { def_note("pitch-shift"); RET(defn(DEF_PITCHSHIFT)); }
 
 /* ---- system and racks */
-static void h_sys_mem(Cpu *c) { WR32(A1, 0x10000); RET(0); }   /* (params, *size) */
+/* (params, *size): the system's memory -- the host keeps its own state, so only a plausible figure. 0x10000 here meant no
+ * sound at all in Phantasy Star Nova: its CRI ADX2 refuses an NGS system needing more than 0x2000 - 0x10 bytes
+ * (0x819d6804: size + 0x10 > 0x2000 -> -1) and never called sceNgsSystemInit, so only movies played sound (2026-11-18).
+ * The other games allocate whatever this says and never look at it. */
+static void h_sys_mem(Cpu *c) { WR32(A1, 0x1000); RET(0); }
 static void h_sys_init(Cpu *c) {   /* (memory, ?, SceNgsSystemInitParams*, *handle): maxRacks, maxVoices, granularity, sampleRate, maxModules */
 	if (A2) { granularity = RD32(A2 + 8) ? RD32(A2 + 8) : 512; sample_rate = RD32(A2 + 12) ? RD32(A2 + 12) : 48000; }
 	fprintf(stderr, "    ngs: system, granularity %u at %u Hz\n", granularity, sample_rate);
@@ -1224,6 +1241,9 @@ const HleEntry hle_ngs[] = {
 	{"sceNgsVoiceDefGetReverbBuss", h_def_reverb}, {"sceNgsVoiceDefGetScreamVoice", h_def_scream},
 	{"sceNgsVoiceDefGetScreamAtrac9Voice", h_def_scream_at9}, {"sceNgsVoiceDefGetCompressorBuss", h_def_compressor},
 	{"sceNgsVoiceDefGetCompressorSideChainBuss", h_def_sidechain},
+	{"sceNgsVoiceDefGetAtrac9Voice", h_def_at9}, {"sceNgsVoiceDefGetTemplate1", h_def_template1}, {"sceNgsVoiceDefGetMixerBuss", h_def_mixer},
+	{"sceNgsVoiceDefGetEqBuss", h_def_eq}, {"sceNgsVoiceDefGetDelayBuss", h_def_delay}, {"sceNgsVoiceDefGetDistortionBuss", h_def_distortion},
+	{"sceNgsVoiceDefGetPitchShiftBuss", h_def_pitchshift},
 	{"sceNgsVoiceSetFinishedCallback", h_voice_finished_cb}, {"sceNgsVoiceSetModuleCallback", h_voice_module_cb},
 	{"sceNgsVoiceGetParamsOutOfRange", h_params_out_of_range}, {"sceNgsVoiceInit", h_ok}, {"sceNgsPatchGetInfo", h_patch_info},
 	{"sceNgsAT9GetSectionDetails", h_at9_section},

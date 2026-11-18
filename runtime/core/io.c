@@ -160,12 +160,15 @@ void io_read_stats_take(uint64_t *rd_bytes, uint32_t *rd_calls, uint64_t *rd_us,
 	*ar_bytes = __atomic_exchange_n(&io_ar_bytes, 0, __ATOMIC_RELAXED); *ar_calls = __atomic_exchange_n(&io_ar_calls, 0, __ATOMIC_RELAXED); *ar_us = __atomic_exchange_n(&io_ar_us, 0, __ATOMIC_RELAXED);
 }
 static uint64_t io_now_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000; }
-static void h_io_read(Cpu *c) { if (hfd(A0) < 0) { RET(SCE_EBADF); return; } uint64_t t0 = io_now_us(); gwatch_write_begin(A1, A2); ssize_t n = read(hfd(A0), G(A1), A2); int e = errno; gwatch_write_end(A1, A2); io_read_note(n, io_now_us() - t0, 0); RET(n < 0 ? sce_err(e) : (uint32_t)n); }
+/* (gfx_guest_replacing/replaced around every read: a render target the game freed and reused for what is read now must
+ * not come down over it later -- gfx.h; Phantasy Star Nova's noisy UI atlas, 2026-11-18) */
+void gfx_guest_replacing(uint32_t addr, uint32_t len); void gfx_guest_replaced(uint32_t addr, uint32_t len);
+static void h_io_read(Cpu *c) { if (hfd(A0) < 0) { RET(SCE_EBADF); return; } uint64_t t0 = io_now_us(); gfx_guest_replacing(A1, A2); gwatch_write_begin(A1, A2); ssize_t n = read(hfd(A0), G(A1), A2); int e = errno; gwatch_write_end(A1, A2); if (n > 0) gfx_guest_replaced(A1, (uint32_t)n); io_read_note(n, io_now_us() - t0, 0); RET(n < 0 ? sce_err(e) : (uint32_t)n); }
 static void h_io_write(Cpu *c) { if (hfd(A0) < 0) { RET(SCE_EBADF); return; } gwatch_read_open(A1, A2); ssize_t n = write(hfd(A0), G(A1), A2); RET(n < 0 ? sce_err(errno) : (uint32_t)n); }
 static void h_io_pread(Cpu *c) {   /* (fd, buf, size, SceOff offset: 8-aligned, so on the stack) */
 	if (hfd(A0) < 0) { RET(SCE_EBADF); return; }   /* (a closed or unknown fd: the console's error, not the host C library's -1 -- fatal on Windows) */
 	uint64_t off = RD64(c->r[13]);
-	uint64_t t0 = io_now_us(); gwatch_write_begin(A1, A2); ssize_t n = pread(hfd(A0), G(A1), A2, (off_t)off); int e = errno; gwatch_write_end(A1, A2); io_read_note(n, io_now_us() - t0, 0); RET(n < 0 ? sce_err(e) : (uint32_t)n);
+	uint64_t t0 = io_now_us(); gfx_guest_replacing(A1, A2); gwatch_write_begin(A1, A2); ssize_t n = pread(hfd(A0), G(A1), A2, (off_t)off); int e = errno; gwatch_write_end(A1, A2); if (n > 0) gfx_guest_replaced(A1, (uint32_t)n); io_read_note(n, io_now_us() - t0, 0); RET(n < 0 ? sce_err(e) : (uint32_t)n);
 }
 static void h_io_pwrite(Cpu *c) { if (hfd(A0) < 0) { RET(SCE_EBADF); return; } gwatch_read_open(A1, A2); ssize_t n = pwrite(hfd(A0), G(A1), A2, (off_t)RD64(c->r[13])); RET(n < 0 ? sce_err(errno) : (uint32_t)n); }   /* as pread */
 static void h_io_lseek(Cpu *c) {   /* (fd, SceOff offset in r2:r3, whence on the stack) -> SceOff */

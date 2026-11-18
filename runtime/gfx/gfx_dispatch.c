@@ -169,6 +169,8 @@ void gfx_vis_write(uint32_t addr, uint32_t count) {   /* (inside a renderer entr
 	gfx_guest_writing(addr, 4); WR32(addr, count); gfx_guest_written(addr, 4);
 }
 void gfx_guest_reading(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend()) gfx_gpu_guest_reading(addr, len)); }
+void gfx_guest_replacing(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend()) gfx_gpu_guest_replacing(addr, len)); }   /* a file read into guest memory (gfx.h) */
+void gfx_guest_replaced(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend()) gfx_gpu_guest_replaced(addr, len)); }
 /* a scene's notification held back until its visibility counts land (gfx_gpu.c gfx_gpu_vis_defer): the kick hands its
  * fragment-phase writes here; the poller writes them once the GPU is done even if nothing on the game's side asks, and
  * gfx_vis_settle (sceGpuSignalWait, gpu.c) waits for them when the game waits for its notification */

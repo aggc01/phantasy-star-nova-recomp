@@ -368,6 +368,7 @@ static SDL_GPUDevice *gpu(void) { return (SDL_GPUDevice *)window_gpu_device(); }
 static int vk_fragment_stores;   /* a Vulkan device with fragmentStoresAndAtomics */
 void *gfx_gpu_create_device(void) {
 	SDL_GPUDevice *d = 0;
+	{ extern void plat_gpu_cache_private(void); plat_gpu_cache_private(); }   /* (before the driver loads: platform.h) */
 #ifndef __APPLE__   /* (on Apple, Metal: SDL could otherwise find MoltenVK) */
 	if (!getenv("SDL_GPU_DRIVER") || !strcmp(getenv("SDL_GPU_DRIVER"), "vulkan")) {
 		uint32_t vk10[55] = {0}; vk10[0] = 1; vk10[26] = 1;   /* VkPhysicalDeviceFeatures, 55 VkBool32 in the spec's order: [0] robustBufferAccess, [26] fragmentStoresAndAtomics */
@@ -1552,6 +1553,8 @@ typedef struct {
 	int sampled;                  /* a GPU draw has read it as a texture (target_view): not a CPU readback buffer (see readback_enqueue) */
 	int self_read;                /* a draw of a scene on it sampled the region it was drawing (same_region_read): its scenes start with a download */
 	int cpu_reads;                /* the game read its guest memory on the CPU (the read watch, see readback_enqueue): read back after every scene */
+	int armed; uint32_t arm_clock; uint64_t arm_gen;   /* its pages read-armed after a scene (readback_enqueue): the game-touch clock then and its gen --
+	                                                    * pages the game touched later, with no GPU write since, are the game's (target_download_to_guest keeps them) */
 	uint64_t drawn_frame, prev_drawn_frame;   /* the last two frames (gpu_frame_no) a scene drew into it: drawn every frame, or now and then (skip_lossless) */
 	int alias_in;                 /* this scene began with another target's bytes handed over (target_alias_sync): not its own last frame (skip_lossless) */
 	int cpu_dirty;   /* guest memory was written since the GPU texture was last uploaded (a CPU-fallback draw happened) */
@@ -1955,14 +1958,76 @@ static void textures_invalidate(uint32_t lo, uint32_t hi);
  * target_write would have stored the same colours (so a CPU-fallback draw, a texture that reads
  * this memory in another format or layout, present and RECOMP_SHOT all see the real bytes) */
 static const char *sync_why = "";   /* for the trace: what asked for this download */
+/* Pages of a target the game touched after the target's last scene, with no GPU write since, keep the game's bytes over a
+ * download (RECOMP_GPU_NO_KEEP_REWRITTEN=1: off). Phantasy Star Nova (2026-11-18) reuses the memory of character
+ * creation's RGBA targets for the story's textures, copied in by its own code; the renderer still held those targets as
+ * newer on the GPU, and a later texture bind or an overlapping scene (target_alias_sync) downloaded the old pixels over the
+ * new textures: noise on the dialogue box, the HUD, Filldia. The read watch armed those pages after the targets' last
+ * scenes, so each such write faulted and read_hook recorded its page in game_touch (and logged "the game reads target ..."
+ * for it: it can't tell a load from a store; this renderer's own accesses don't count). On the Vita the GPU's pixels
+ * reached memory long before those writes, which land over them --
+ * what keeping those pages reproduces. A page the game only read (its bytes as at the first touch) takes the download
+ * as before. Whole pages: armed pages are whole pages inside the target. */
+/* (reviewed 2026-11-18 by two agents; their points taken: a read is not a rewrite -- the hook hashes the page at the first
+ * touch, before the access lands, and a page is kept only if its bytes differ now; whole armed pages only; the raw path
+ * copies around kept pages from a host buffer, so nothing the game stores during the GPU wait is overwritten; the float
+ * path saves kept pages only around the CPU encode; a target with kept pages re-uploads before its next GPU use.) */
+typedef struct { uint32_t addr, len; uint8_t *save; } KeptRange;
+static int keep_rewritten_on(void) { static int v = -1; if (v < 0) v = getenv("RECOMP_GPU_NO_KEEP_REWRITTEN") == 0; return v; }
+static uint32_t *game_touch_pages(uint32_t **hashes);   /* (the read watch's per-page record, below) */
+static uint32_t guest_page_hash(uint32_t page);
+static int kept_pages_find(TargetEntry *e, uint32_t gbytes, KeptRange **out) {
+	*out = 0;
+	uint32_t *hash, *touch = game_touch_pages(&hash);
+	if (!keep_rewritten_on() || !touch || !e->armed || e->arm_gen != e->gen || !gbytes) return 0;
+	int sh = gwatch_page_shift(); const uint64_t ps = 1ull << sh;
+	const uint64_t a = ((uint64_t)e->addr + ps - 1) & ~(ps - 1), b = ((uint64_t)e->addr + gbytes) & ~(ps - 1);   /* the whole pages gwatch_read_arm armed */
+	if (b <= a) return 0;
+	int n = 0, cap = 0; KeptRange *r = 0; uint32_t npages_kept = 0;
+	for (uint32_t p = (uint32_t)(a >> sh); p < (uint32_t)(b >> sh); p++) {
+		if (__atomic_load_n(&touch[p], __ATOMIC_ACQUIRE) <= e->arm_clock) continue;
+		if (guest_page_hash(p) == __atomic_load_n(&hash[p], __ATOMIC_ACQUIRE)) continue;   /* touched but unchanged: a read */
+		uint32_t lo = p << sh, len = 1u << sh;
+		npages_kept++;
+		if (n && r[n - 1].addr + r[n - 1].len == lo) { r[n - 1].len += len; continue; }   /* runs of pages, one range each */
+		if (n == cap) { cap = cap ? 2 * cap : 16; r = realloc(r, sizeof *r * (size_t)cap); }
+		r[n].addr = lo; r[n].len = len; r[n].save = 0; n++;
+	}
+	if (n) {
+		static int said; if (said++ < 12) fprintf(stderr, "    gpu: target %#x %ux%u: %u of its pages the game rewrote after its last scene keep the game's bytes over a download %s\n",
+		                                         e->addr, e->width, e->height, npages_kept, sync_why);
+		if (trace_sync()) fprintf(stderr, "gpu trace: download target %#x keeps %u pages (rewritten after its last scene)\n", e->addr, npages_kept);
+	}
+	*out = r; return n;
+}
+static void kept_pages_save(KeptRange *r, int n) { for (int k = 0; k < n; k++) { r[k].save = malloc(r[k].len); memcpy(r[k].save, G(r[k].addr), r[k].len); } }
+static void kept_pages_restore(KeptRange *r, int n) {
+	for (int k = 0; k < n; k++) { gwatch_write_begin(r[k].addr, r[k].len); memcpy(G(r[k].addr), r[k].save, r[k].len); gwatch_write_end(r[k].addr, r[k].len); free(r[k].save); }
+	free(r);
+}
 static void target_download_to_guest(TargetEntry *e) {
 	if (trace_sync()) fprintf(stderr, "gpu trace: download target %#x to guest %s (after %u gpu + %u software draws)\n", e->addr, sync_why, n_gpu_draws, n_fallback);
 	uint64_t tdl0 = us_now(); n_tgt_downloads++;
 	uint32_t npx = e->width * e->height;
 	GfxTarget t = target_entry_as_gfx(e);
 	uint32_t gbytes = (uint32_t)gfx_target_bpp(&t) * npx;
+	KeptRange *kept; int nkept = kept_pages_find(e, gbytes, &kept);
 	if (target_raw_ok(e, &t)) {
-		gwatch_write_begin(e->addr, gbytes); target_download_texels(e, 0, G(e->addr)); gwatch_write_end(e->addr, gbytes);
+		if (!nkept) { gwatch_write_begin(e->addr, gbytes); target_download_texels(e, 0, G(e->addr)); gwatch_write_end(e->addr, gbytes); }
+		else {   /* into a host buffer, then guest memory around the kept pages */
+			uint8_t *tmp = malloc(gbytes); target_download_texels(e, 0, tmp);
+			gwatch_write_begin(e->addr, gbytes);
+			uint32_t cur = e->addr, end = e->addr + gbytes;
+			for (int k = 0; k <= nkept; k++) {
+				uint32_t stop = k < nkept ? kept[k].addr : end;
+				if (stop > cur) memcpy(G(cur), tmp + (cur - e->addr), stop - cur);
+				if (k < nkept) cur = kept[k].addr + kept[k].len;
+			}
+			gwatch_write_end(e->addr, gbytes);
+			free(tmp);
+			e->cpu_dirty = 1;   /* the GPU texture still holds the old pixels where the game's bytes were kept */
+		}
+		free(kept);
 		e->gpu_dirty = 0;
 		textures_invalidate(e->addr, e->addr + gbytes);
 		t_tgt_download += us_now() - tdl0;
@@ -1976,9 +2041,11 @@ static void target_download_to_guest(TargetEntry *e) {
 		if (ta && ta >= e->addr && ta < e->addr + gbytes)
 			fprintf(stderr, "gpu trace addr: download target %#x fmt %#x %ux%u kind %d (frame %llu) %s writes %#x\n", e->addr, t.format, e->width, e->height, e->kind, (unsigned long long)gpu_frame_no, sync_why, ta);
 	}
+	if (nkept) kept_pages_save(kept, nkept);   /* (after the GPU wait: only the encode below can overwrite a store the game makes now) */
 	gwatch_write_begin(e->addr, gbytes);   /* one call opens the pages under a watched texture, instead of a write fault per page */
 	gfx_encode_target_f32(&t, f);
 	gwatch_write_end(e->addr, gbytes);
+	if (nkept) { kept_pages_restore(kept, nkept); e->cpu_dirty = 1; } else free(kept);
 	{ static uint32_t ta = 1, last = 0xdeadbeef; if (ta == 1) { const char *v = getenv("RECOMP_GPU_TRACE_ADDR"); ta = v ? (uint32_t)strtoul(v, 0, 16) : 0; }
 	  if (ta && ta >= e->addr && ta < e->addr + gbytes && RD32(ta) != last) { last = RD32(ta); fprintf(stderr, "gpu trace addr: frame %llu: %#x now holds %#x\n", (unsigned long long)gpu_frame_no, ta, last); } }
 	if (trace_sync() && npx > 10 * e->width + 10) fprintf(stderr, "gpu trace:   download (10,10) = %g %g %g -> guest word %#x\n", f[4 * (10 * e->width + 10)], f[4 * (10 * e->width + 10) + 1], f[4 * (10 * e->width + 10) + 2], RD32(e->addr + 4 * (10 * e->width + 10)));
@@ -3310,11 +3377,26 @@ static void readbacks_complete_at_present(void) {
  * from then on. The graphics code's own accesses (inside gfx_dispatch.c's lock) don't count. RECOMP_GPU_NO_READ_WATCH=1: off. */
 extern __thread int gfx_host_depth;
 static uint32_t rw_pending[16]; static int rw_npending;
+/* per guest page: the game-touch clock when the game (not this renderer: gfx_host_depth) last faulted on it while it was
+ * read-armed -- a load or a store, the handler can't tell (target_download_to_guest's kept pages). 4 bytes a host page */
+static uint32_t *game_touch, *game_touch_hash; static uint32_t touch_clock;
+static uint32_t guest_page_hash(uint32_t page) {   /* (a page's bytes, cheaply: FNV-style over 64-bit words; never 0) */
+	const uint64_t *w = (const uint64_t *)G(page << gwatch_page_shift()); const size_t n = ((size_t)1 << gwatch_page_shift()) / 8;
+	uint64_t h = 0xcbf29ce484222325ull;
+	for (size_t i = 0; i < n; i++) { h ^= w[i]; h *= 0x100000001b3ull; h ^= h >> 31; }
+	return (uint32_t)(h ^ (h >> 32)) | 1u;
+}
 static void read_hook(uint32_t addr) {   /* (from the fault handler, any thread: records only) */
 	if (gfx_host_depth) return;
+	if (game_touch) {   /* the page as it was before this access (the faulting load or store runs after the handler): kept_pages_find compares */
+		const uint32_t p = addr >> gwatch_page_shift();
+		__atomic_store_n(&game_touch_hash[p], guest_page_hash(p), __ATOMIC_RELEASE);
+		__atomic_store_n(&game_touch[p], __atomic_add_fetch(&touch_clock, 1, __ATOMIC_ACQ_REL), __ATOMIC_RELEASE);
+	}
 	const int i = __atomic_fetch_add(&rw_npending, 1, __ATOMIC_ACQ_REL);
 	if (i < 16) __atomic_store_n(&rw_pending[i], addr, __ATOMIC_RELEASE);
 }
+static uint32_t *game_touch_pages(uint32_t **hashes) { *hashes = game_touch_hash; return game_touch_hash ? game_touch : 0; }
 static void read_watch_marks(void) {
 	int n = __atomic_exchange_n(&rw_npending, 0, __ATOMIC_ACQ_REL); if (n > 16) n = 16;
 	for (int k = 0; k < n; k++) {
@@ -3330,11 +3412,14 @@ static void read_watch_marks(void) {
 }
 static void readback_enqueue(TargetEntry *e) {
 	static int maxpx = -1, all, watch; if (maxpx < 0) { const char *v = getenv("RECOMP_GPU_READBACK_MAX"); maxpx = v ? atoi(v) : 32768; all = getenv("RECOMP_GPU_READBACK_ALL") != 0;
-		watch = !getenv("RECOMP_GPU_NO_READ_WATCH") && gwatch_on(); if (watch) gwatch_set_read_hook(read_hook); }
+		watch = !getenv("RECOMP_GPU_NO_READ_WATCH") && gwatch_on();
+		if (watch) { const size_t np = (size_t)((1ull << 32) >> gwatch_page_shift());
+			game_touch_hash = calloc(np, sizeof *game_touch_hash); game_touch = calloc(np, sizeof *game_touch); gwatch_set_read_hook(read_hook); } }
 	if (watch) read_watch_marks();
 	if (!e || !e->addr || !e->gpu_dirty) return;
 	if (!all && !e->cpu_reads && ((e->sampled && e->kind != TK_F32) || !maxpx || e->width * e->height > (uint32_t)maxpx)) {
-		if (watch) { GfxTarget g = target_entry_as_gfx(e); gwatch_read_arm(e->addr, (uint32_t)gfx_target_bpp(&g) * e->width * e->height); }
+		if (watch) { GfxTarget g = target_entry_as_gfx(e); const uint32_t c0 = __atomic_load_n(&touch_clock, __ATOMIC_ACQUIRE);   /* (before arming: a fault in between counts as after) */
+			gwatch_read_arm(e->addr, (uint32_t)gfx_target_bpp(&g) * e->width * e->height); e->armed = 1; e->arm_clock = c0; e->arm_gen = e->gen; }
 		return;
 	}   /* RECOMP_GPU_READBACK_ALL=1 (diagnosis): every scene's target, so guest memory holds what the console's would -- does the game read a target on the CPU the rule above misses? */
 	readbacks_complete(e->addr, e->addr + 1);   /* an older copy of this one first */
@@ -3400,6 +3485,35 @@ void gfx_gpu_guest_written(uint32_t addr, uint32_t len) {
 		uint32_t hi = de->key + 4u * de->w * de->h;   /* generous: every depth/stencil format is at most 4 bytes a sample */
 		if (addr < hi && addr + len > de->key) de->gpu_newer = 0;
 	}
+}
+/* a file read into guest memory (gfx.h gfx_guest_replacing): no download first. Phantasy Star Nova (2026-11-18) reuses
+ * memory where character creation's 1024x1024 RGBA targets were for the story's UI atlas and character textures; file
+ * reads never told the renderer, the targets stayed "newer on the GPU", and a later texture bind ("texture view") or a
+ * scene on an overlapping target downloaded the stale pixels over the new textures: noise on the dialogue box, the HUD,
+ * Filldia. The page watch (gwatch_write_begin/end) stays the caller's. */
+/* colour targets only, exact byte ranges: a depth buffer never comes down to guest memory, and its range is only bounded
+ * generously (4 bytes a sample) -- a read into the buffer after a live D16 one would have thrown that depth away
+ * (review, 2026-11-18). Dropped BEFORE the read too: nothing may download a stale target into the buffer while the read
+ * runs outside the lock; and again after, for a target a draw dirtied meanwhile. */
+static void targets_drop_under(uint32_t addr, uint32_t len, const char *when) {
+	const uint64_t lo = addr, hi = (uint64_t)addr + len;
+	for (int i = 0; i < ntargets; i++) {
+		TargetEntry *e = &targets[i]; if (!e->color) continue;
+		GfxTarget t = target_entry_as_gfx(e); const uint64_t thi = (uint64_t)e->addr + (uint64_t)gfx_target_bpp(&t) * e->width * e->height;
+		if (lo < thi && hi > e->addr) {
+			if (trace_sync() && e->gpu_dirty) fprintf(stderr, "gpu trace: a file read %s [%#x, +%u) over target %#x: its GPU pixels dropped, re-upload before its next use\n", when, addr, len, e->addr);
+			e->cpu_dirty = 1; e->gpu_dirty = 0;
+		}
+	}
+}
+void gfx_gpu_guest_replacing(uint32_t addr, uint32_t len) {
+	if (!gpu() || !len) return;
+	readbacks_complete(addr, (uint32_t)((uint64_t)addr + len > 0xffffffffull ? 0xffffffffull : (uint64_t)addr + len));
+	targets_drop_under(addr, len, "begins");
+}
+void gfx_gpu_guest_replaced(uint32_t addr, uint32_t len) {
+	if (!gpu() || !len) return;
+	targets_drop_under(addr, len, "replaced");
 }
 /* every GPU target -> guest memory (gfxreplay's RECOMP_REPLAY_DRAWS dump: the state mid-frame) */
 void gfx_gpu_sync_all(void) { if (!gpu()) return; batch_flush("sync to guest"); readbacks_complete(0, ~0u); for (int i = 0; i < ntargets; i++) if (targets[i].gpu_dirty) target_download_to_guest(&targets[i]); }
@@ -6280,6 +6394,70 @@ static void hist_save(int mark) {
 	if (!j->px || pthread_create(&t, 0, hist_write, j)) { free(j->px); free(j); return; }
 	pthread_detach(t);
 }
+/* RECOMP_VIDEO_DIR=<dir>: a gameplay recording, the picture half (display.c video_audio has the sound;
+ * dev/psnova/make_video.py makes the MP4). Every presented frame at the render scale, downloaded here and encoded to
+ * frame_<n>.jpg (quality 92) by two worker threads, with "<n> <host us> <file>" in frames.txt -- the host's raw
+ * monotonic clock (display.c video_clock_us), the sound's too. A frame that finds the queue full is dropped and counted
+ * (said at exit); the download waits for the GPU each frame, a small cost on the render thread. */
+extern const char *video_dir(void); extern uint64_t video_clock_us(void);
+extern int stbi_write_jpg_to_func(void (*func)(void *, void *, int), void *context, int x, int y, int comp, const void *data, int quality);   /* (media/jpeg.c builds stb_image_write) */
+enum { VQ_SIZE = 16 };
+typedef struct { uint8_t *px; uint32_t w, h, n; uint64_t t; } VideoFrame;
+static VideoFrame vq[VQ_SIZE]; static int vq_head, vq_count;
+static pthread_mutex_t vq_m = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t vq_cv = PTHREAD_COND_INITIALIZER;
+static FILE *vq_txt; static unsigned vq_frame, vq_dropped, vq_written;
+static void vq_put(void *ctx, void *data, int size) { fwrite(data, 1, (size_t)size, (FILE *)ctx); }
+static void vq_exit(void) { pthread_mutex_lock(&vq_m); if (vq_txt) fflush(vq_txt); fprintf(stderr, "    video: %u frames written, %u dropped (queue full), %d still queued at exit\n", vq_written, vq_dropped, vq_count); pthread_mutex_unlock(&vq_m); }
+static void *vq_worker(void *arg) {
+	(void)arg;
+	for (;;) {
+		pthread_mutex_lock(&vq_m);
+		while (!vq_count) pthread_cond_wait(&vq_cv, &vq_m);
+		VideoFrame f = vq[vq_head]; vq_head = (vq_head + 1) % VQ_SIZE; vq_count--;
+		pthread_mutex_unlock(&vq_m);
+		char name[64], path[1024]; snprintf(name, sizeof name, "frame_%07u.jpg", f.n); snprintf(path, sizeof path, "%s/%s", video_dir(), name);
+		FILE *fo = fopen(path, "wb");
+		if (fo) { stbi_write_jpg_to_func(vq_put, fo, (int)f.w, (int)f.h, 4, f.px, 92); fclose(fo); }
+		free(f.px);
+		pthread_mutex_lock(&vq_m);
+		if (fo && vq_txt) { fprintf(vq_txt, "%u %llu %s\n", f.n, (unsigned long long)f.t, name); if (++vq_written % 30 == 0) fflush(vq_txt); }
+		pthread_mutex_unlock(&vq_m);
+	}
+	return 0;
+}
+static void video_frame(TargetEntry *e) {
+	extern int video_on(void);
+	const char *d = video_dir(); if (!d || !video_on()) return;
+	static int started; if (!started) {
+		started = 1; char p[1024]; snprintf(p, sizeof p, "%s/frames.txt", d); vq_txt = fopen(p, "w");
+		for (int k = 0; k < 2; k++) { pthread_t th; pthread_create(&th, 0, vq_worker, 0); pthread_detach(th); }
+		atexit(vq_exit);
+		fprintf(stderr, "    video: recording every presented frame into %s\n", d);
+	}
+	const uint64_t t = video_clock_us();
+	pthread_mutex_lock(&vq_m); const int full = vq_count >= VQ_SIZE; if (full) vq_dropped++; pthread_mutex_unlock(&vq_m);
+	if (full) return;
+	target_sync_for_gpu(e);
+	uint32_t w = TSX(e, e->width), h = TSY(e, e->height), n = 4 * w * h;
+	SDL_GPUTransferBufferCreateInfo xci = { .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD, .size = n };
+	SDL_GPUTransferBuffer *xb = SDL_CreateGPUTransferBuffer(gpu(), &xci);
+	if (!xb) return;
+	SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu()); SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
+	SDL_GPUTextureRegion src = { .texture = e->color, .w = w, .h = h, .d = 1 };
+	SDL_GPUTextureTransferInfo dst = { .transfer_buffer = xb, .pixels_per_row = w, .rows_per_layer = h };
+	SDL_DownloadFromGPUTexture(cp, &src, &dst); SDL_EndGPUCopyPass(cp);
+	SDL_GPUFence *f = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd); SDL_WaitForGPUFences(gpu(), true, &f, 1); SDL_ReleaseGPUFence(gpu(), f);
+	const uint8_t *px = SDL_MapGPUTransferBuffer(gpu(), xb, false);
+	uint8_t *copy = px ? malloc(n) : 0;
+	if (copy) memcpy(copy, px, n);
+	SDL_UnmapGPUTransferBuffer(gpu(), xb); SDL_ReleaseGPUTransferBuffer(gpu(), xb);
+	if (!copy) return;
+	pthread_mutex_lock(&vq_m);
+	vq[(vq_head + vq_count) % VQ_SIZE] = (VideoFrame){ copy, w, h, ++vq_frame, t }; vq_count++;
+	pthread_cond_signal(&vq_cv);
+	pthread_mutex_unlock(&vq_m);
+}
+
 void gfx_gpu_present(uint32_t base, uint32_t width, uint32_t height, uint32_t pitch, uint32_t format) {
 	fsr_update();   /* (FSR's setting, once a frame) */
 	static int stats = -1; if (stats < 0) stats = getenv("RECOMP_GPU_STATS") != 0;
@@ -6342,6 +6520,7 @@ void gfx_gpu_present(uint32_t base, uint32_t width, uint32_t height, uint32_t pi
 			if (fo) fclose(fo);
 			SDL_UnmapGPUTransferBuffer(gpu(), xb); SDL_ReleaseGPUTransferBuffer(gpu(), xb);
 		}
+		if (e->color && (e->kind == TK_U8 || e->kind == TK_U8S)) video_frame(e);   /* (RECOMP_VIDEO_DIR: a gameplay recording) */
 		extern int window_active(void); extern void window_present_gpu(void *tex, uint32_t w, uint32_t h, int raw);
 		static int no_gpu_present = -1; if (no_gpu_present < 0) no_gpu_present = getenv("RECOMP_GPU_NO_PRESENT") != 0;   /* RECOMP_GPU_NO_PRESENT=1: present through guest memory as before */
 		/* an sRGB frame goes to the window as raw texels (a copy, not a blit) where the backend copies between the sRGB and

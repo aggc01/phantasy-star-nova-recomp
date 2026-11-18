@@ -702,6 +702,9 @@ static void h_zero_ok(Cpu *c) { RET(0); }   /* ChangeThreadVfpException, CloseSe
 static void h_exit_process(Cpu *c) { fprintf(stderr, "process exited (sceKernelExitProcess %#x)\n", A0); fflush(stderr); exit(0); }
 static void h_abort_handler(Cpu *c) {   /* libc's abort() ends here; a stub that returned let the program run on past its own abort */
 	fprintf(stderr, "abort (sceKernelCallAbortHandler from lr %#x); last formatted string: %s\n", c->r[14], hle_last_format);
+	/* the native stack IS the guest call chain (recompiled functions are C functions): which game code gave up --
+	 * symbolise with llvm-nm on the program (Phantasy Star Nova aborted after "Start the Game", 2026-11-18) */
+	{ extern void plat_backtrace(FILE *); plat_backtrace(stderr); }
 	fflush(stderr); exit(1);
 }
 
@@ -1164,6 +1167,20 @@ static void h_set_evf(Cpu *c) {
 		if (evf_match(o->bits, w->bits, w->mode)) { evf_take(o, w->bits, w->mode, w->out); wake(o, w, 0); }
 	}
 	pthread_mutex_unlock(&o->m);
+	RET(0);
+}
+/* sceKernelCancelEventFlag (uid, setPattern, *numWaitThreads): every waiter woken with SCE_KERNEL_ERROR_WAIT_CANCEL, the
+ * pattern SET to setPattern (not or-ed in), the number woken written. Stubbed (returned 0, set nothing, woke nobody),
+ * Phantasy Star Nova hung after its first frame: its Aska engine cancels flag 0x400200a9 with pattern 2 at start-up and
+ * a job thread then waits for bit 2 forever while another polls for it (2026-11-18). */
+static void h_cancel_evf(Cpu *c) {
+	Obj *o = by_uid(A0, EVF); if (!o) { RET(E_UNKNOWN_EVF_ID); return; }
+	pthread_mutex_lock(&o->m);
+	uint32_t n = 0;
+	for (Waiter *w = o->head, *nx; w; w = nx) { nx = w->next; wake(o, w, E_WAIT_CANCEL); n++; }
+	o->bits = A1;
+	pthread_mutex_unlock(&o->m);
+	if (A2) WR32(A2, n);
 	RET(0);
 }
 static void h_clear_evf(Cpu *c) { Obj *o = by_uid(A0, EVF); if (!o) { RET(E_UNKNOWN_EVF_ID); return; } pthread_mutex_lock(&o->m); o->bits &= A1; pthread_mutex_unlock(&o->m); RET(0); }   /* (uid, bits to keep) */
@@ -1816,7 +1833,7 @@ const HleEntry hle_kernel[] = {
 	{"sceKernelOpenSema", h_open_sema}, {"sceKernelCloseSema", h_zero_ok}, {"sceKernelOpenMutex", h_open_mutex}, {"sceKernelCloseMutex", h_zero_ok},
 	{"sceKernelCreateEventFlag", h_create_evf}, {"sceKernelWaitEventFlag", h_wait_evf}, {"sceKernelWaitEventFlagCB", h_wait_evf_cb},
 	{"sceKernelPollEventFlag", h_poll_evf}, {"sceKernelSetEventFlag", h_set_evf}, {"sceKernelClearEventFlag", h_clear_evf},
-	{"sceKernelDeleteEventFlag", h_delete_evf}, {"sceKernelGetEventFlagInfo", h_evf_info},
+	{"sceKernelDeleteEventFlag", h_delete_evf}, {"sceKernelGetEventFlagInfo", h_evf_info}, {"sceKernelCancelEventFlag", h_cancel_evf},
 	{"sceKernelCreateSimpleEvent", h_create_sevent}, {"sceKernelDeleteSimpleEvent", h_delete_sevent}, {"sceKernelWaitEvent", h_wait_sevent}, {"sceKernelWaitEventCB", h_wait_sevent_cb},
 	{"sceKernelPollEvent", h_poll_sevent}, {"sceKernelSetEvent", h_set_sevent}, {"sceKernelClearEvent", h_clear_sevent},
 	{"sceKernelCreateMutex", h_create_mutex}, {"sceKernelLockMutex", h_lock_mutex}, {"sceKernelLockMutexCB", h_lock_mutex_cb},

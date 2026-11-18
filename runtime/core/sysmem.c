@@ -50,19 +50,46 @@ static void hole_put(uint32_t base, uint32_t size) {
 	if (nholes < MAX_HOLES) { holes[nholes][0] = base; holes[nholes][1] = size; nholes++; }   /* (else that memory stays unused) */
 }
 static uint32_t page_up(uint32_t n) { return (n + 4095u) & ~4095u; }
+/* where the console puts a block of each type: CDRAM (0x09408060) on 256 KiB boundaries, physically contiguous main
+ * memory (USER_MAIN_PHYCONT_RW 0x0c80d060, _NC_RW 0x0d808060) on 1 MiB ones, the rest on pages. Sony's libraries count on
+ * it: the AvPlayer carves its H.264 decoder's memory out of a game's block at 256 KiB then 1 MiB alignment, sized for an
+ * aligned block -- Phantasy Star Nova's 4 MiB 'MovieTextureMemBlock' at 0x260b3000 lost 0xcd000 bytes to padding, the
+ * decoder's 0x2c0000 no longer fit, and every movie played sound over a black screen (2026-11-18) */
+static uint32_t block_align(uint32_t type) {
+	switch (type) {
+	case 0x09408060u: return 0x40000u;
+	case 0x0c80d060u: case 0x0d808060u: return 0x100000u;
+	default: return 4096u;
+	}
+}
+static uint32_t hole_take_aligned(uint32_t size, uint32_t align) {   /* hole_take, the base on an align boundary (the pieces before and after go back) */
+	if (align <= 4096u) return hole_take(size);
+	int best = -1; uint32_t best_at = 0;
+	for (int i = 0; i < nholes; i++) {
+		uint32_t at = (holes[i][0] + align - 1) & ~(align - 1), pad = at - holes[i][0];
+		if (pad < holes[i][1] && holes[i][1] - pad >= size && (best < 0 || holes[i][1] < holes[best][1])) best = i, best_at = at;
+	}
+	if (best < 0) return 0;
+	const uint32_t hb = holes[best][0], hs = holes[best][1];
+	holes[best][0] = holes[--nholes][0]; holes[best][1] = holes[nholes][1];
+	if (best_at > hb) hole_put(hb, best_at - hb);
+	if (hb + hs > best_at + size) hole_put(best_at + size, hb + hs - best_at - size);
+	return best_at;
+}
 static void h_alloc_block(Cpu *c) {   /* (name, type, size, opt) */
 	if (!A2) { RET(0x80020001u); return; }   /* an empty block fails, as on the console (illegal size) */
 	pthread_mutex_lock(&block_lock);
 	int slot = -1;
 	for (int i = 0; i < nblocks; i++) if (!blocks[i][1]) { slot = i; break; }   /* a freed slot first */
 	if (slot < 0) { if (nblocks >= MAX_BLOCKS) { pthread_mutex_unlock(&block_lock); RET(0x80020001u); return; } slot = nblocks++; }
-	uint32_t size = A2, base = hole_take(page_up(size));
+	const uint32_t align = block_align(A1);
+	uint32_t size = A2, base = hole_take_aligned(page_up(size), align);
 	const int reused = base != 0;
-	if (!base) base = guest_alloc(size, 4096);
+	if (!base) base = guest_alloc(size, align);
 	blocks[slot][0] = base; blocks[slot][1] = size; block_type[slot] = A1;
 	pthread_mutex_unlock(&block_lock);
 	memset(G(base), 0, size);
-	fprintf(stderr, "    memblock '%s' %#x bytes at %#x%s\n", (char *)G(A0), size, base, reused ? " (reused)" : "");
+	fprintf(stderr, "    memblock '%s' type %#x %#x bytes at %#x%s\n", (char *)G(A0), A1, size, base, reused ? " (reused)" : "");
 	RET(0x10000 + slot);
 }
 static void h_free_block(Cpu *c) {   /* (uid) */

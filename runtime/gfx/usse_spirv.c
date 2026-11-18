@@ -47,7 +47,7 @@ enum {
 	SpvOpFOrdEqual = 180, SpvOpFOrdNotEqual = 182, SpvOpFOrdLessThanEqual = 188, SpvOpFOrdGreaterThan = 186,
 	SpvOpLogicalOr = 166, SpvOpLogicalAnd = 167, SpvOpLogicalNot = 168, SpvOpBitwiseXor = 198, SpvOpINotEqualB = 171,
 	SpvOpSLessThan = 177, SpvOpSLessThanEqual = 179, SpvOpSGreaterThanEqual = 175,
-	SpvOpBranch = 249, SpvOpBranchConditional = 250, SpvOpSelectionMerge = 247,
+	SpvOpBranch = 249, SpvOpBranchConditional = 250, SpvOpSelectionMerge = 247, SpvOpLoopMerge = 246, SpvOpSwitch = 251,
 	SpvOpSNegate = 126, SpvOpShiftRightArithmetic = 195, SpvOpNot = 200, SpvOpBitFieldSExtract = 202,
 	SpvOpULessThan = 176, SpvOpUGreaterThan = 172, SpvOpUMod = 137,
 	SpvOpImage = 100, SpvOpImageFetch = 95, SpvOpImageGather = 96, SpvOpImageQuerySizeLod = 103, SpvOpDPdx = 207, SpvOpDPdy = 208,
@@ -1611,6 +1611,30 @@ static void emit_frag_prologue(Gen *g, const uint32_t sa_tex_unit[256], int *ok)
  * [[color(0)]] fragment input on Metal, the tile's own colour at this pixel as the draws before it, and this
  * draw's earlier primitives, left it: the Vita's own programmable-blend semantics, no copy and no pass split */
 static int fetch_mode = 1;
+/* SMLSI / SMBO's effect on the translate-time register increments (the walk's own cases, for the dispatcher's check) */
+static void moe_apply(int8_t inc[4][17], const UOp *op) {
+	if (op->op == OP_SMLSI)
+		for (int sl = 0; sl < 4; sl++) {
+			int v = op->args[sl], in = (int8_t)(v & 0xFF), mode2 = (v >> 8) & 1;
+			if (!mode2) for (int r = 0; r <= 16; r++) inc[sl][r] = (int8_t)(r * in);
+			else for (int r = 0; r < 4; r++) inc[sl][r] = (int8_t)((in >> (2 * r)) & 3);
+		}
+	else if (op->op == OP_SMBO) for (int sl = 0; sl < 4; sl++) for (int r = 0; r <= 16; r++) inc[sl][r] = (int8_t)(r + op->args[sl]);
+}
+/* the branches the structured walk translates: predicated forward ones, nested inside each other (see the walk). A
+ * program with any other (a loop's branch back, an unconditional jump, ranges that overlap) takes the dispatcher. */
+static int branches_structured(const UOp *code, int n) {
+	int ends[8], nbr = 0;
+	for (int i = 0; i < n; i++) {
+		while (nbr && ends[nbr - 1] <= i) nbr--;
+		const UOp *op = &code[i];
+		if (op->op != OP_BR) continue;
+		int target = i + (int)op->imm;
+		if (op->pred_kind == 0 || op->imm <= 0 || op->args[0] || target > n || (nbr && target > ends[nbr - 1]) || nbr >= 8) return 0;
+		ends[nbr++] = target;
+	}
+	return 1;
+}
 void usse_spirv_set_fetch_mode(int mode) { fetch_mode = mode == 2 ? 2 : 1; }
 void usse_spirv_sa_read(uint32_t out[8]) { memcpy(out, sa_read, sizeof sa_read); }
 static int pcf_unit_next = -1, pcf_taps_next;   /* usse_spirv_set_pcf: the next translation's */
@@ -2253,6 +2277,45 @@ SpirvModule usse_spirv_translate(const UsseProgram *prog, const UsseVertexLayout
 			pcf_step[k] = result1(s, &s->func, SpvOpBitcast, t_float(s), load(s, t_u, pw));
 		}
 	}
+	/* control flow the structured walk can't express -- a loop: Phantasy Star Nova's skinning programs end their body with
+	 * an unconditional branch back, and every such draw went to the software path (slow, and this game's vertex inputs
+	 * defeat it: broken characters at 9 fps in character creation, 2026-11-18) -- runs as a dispatcher instead: the
+	 * program cut into basic blocks at every branch and branch target, and one SPIR-V loop around a switch on the next
+	 * block's number. Every register and predicate lives in its Private variable as in the structured walk, so nothing
+	 * crosses a block boundary but those. Only programs branches_structured refuses take this path; refused still: a
+	 * link-saving call, a target outside the program, translate-time register increments (SMLSI/SMBO) inside a loop. */
+	int dispatch = 0, nblk = 0; int *blk_at = 0;   /* blk_at[i]: the block starting at instruction i (-1: none); [n]: "done" */
+	char dispatch_why[96] = "";
+	if (ok && !branches_structured(code, n)) {
+		int okd = 1, first_back = n;
+		for (int i = 0; i < n; i++) if (code[i].op == OP_BR) {
+			int t = i + (int)code[i].imm;
+			if (code[i].args[0] || t < 0 || t > n) { okd = 0; snprintf(dispatch_why, sizeof dispatch_why, "; dispatcher: branch %d has link %d / target %d of %d", i, code[i].args[0], t, n); }
+			else if (t <= i && t < first_back) first_back = t;
+		}
+		/* SMLSI/SMBO set the register increments at translate time (the walk below), in program order: a loop body that
+		 * changes them must leave them as it found them, so that every pass through it sees the same ones -- simulated */
+		if (okd && first_back < n) {
+			int8_t inc[4][17]; memcpy(inc, g.inc, sizeof inc);
+			for (int i = 0; i < n && okd; i++) {
+				if (code[i].op == OP_BR && (int)code[i].imm <= 0) {
+					int8_t at_t[4][17]; memcpy(at_t, g.inc, sizeof at_t);   /* (the state at its target: re-simulated from the start) */
+					for (int k = 0; k < i + (int)code[i].imm; k++) moe_apply(at_t, &code[k]);
+					if (memcmp(at_t, inc, sizeof inc)) { okd = 0; snprintf(dispatch_why, sizeof dispatch_why, "; dispatcher: the loop %d..%d changes the register increments", i + (int)code[i].imm, i); }
+				}
+				moe_apply(inc, &code[i]);
+			}
+		}
+		if (okd) {
+			blk_at = malloc((size_t)(n + 1) * sizeof *blk_at);
+			for (int i = 0; i <= n; i++) blk_at[i] = -1;
+			blk_at[0] = 0;
+			for (int i = 0; i < n; i++) if (code[i].op == OP_BR) { blk_at[i + (int)code[i].imm] = 0; blk_at[i + 1] = 0; }
+			for (int i = 0; i < n; i++) if (blk_at[i] >= 0) blk_at[i] = nblk++;
+			blk_at[n] = nblk;
+			dispatch = 1;
+		}
+	}
 	for (int tap = 0; tap < taps && ok; tap++) {
 		if (taps > 1) {
 			int side = taps == 16 ? 4 : taps == 9 ? 3 : 2;
@@ -2265,13 +2328,48 @@ SpirvModule usse_spirv_translate(const UsseProgram *prog, const UsseVertexLayout
 			}
 		}
 		struct { int end; uint32_t merge; } brstack[8]; int nbr = 0;
+		uint32_t d_pc = 0, d_header = 0, d_body = 0, d_swm = 0, d_cont = 0, d_merge = 0, *d_lab = 0; int d_open = 0;
+		if (dispatch) {   /* the dispatcher's head: next = 0; loop { switch (next) { case k: block k; ... } } while (next < nblk) */
+			d_pc = global_var(s, t_ptr(s, SpvStoragePrivate, t_uint(s)), SpvStoragePrivate, 0);
+			d_lab = malloc((size_t)nblk * sizeof *d_lab);
+			for (int k = 0; k < nblk; k++) d_lab[k] = nid(s);
+			d_header = nid(s); d_body = nid(s); d_swm = nid(s); d_cont = nid(s); d_merge = nid(s);
+			store(s, d_pc, c_uint(s, 0));
+			INS(&s->func, SpvOpBranch, d_header);
+			INS(&s->func, SpvOpLabel, d_header);
+			INS(&s->func, SpvOpLoopMerge, d_merge, d_cont, 0 /*None*/);
+			INS(&s->func, SpvOpBranch, d_body);
+			INS(&s->func, SpvOpLabel, d_body);
+			uint32_t sel = load(s, t_uint(s), d_pc);
+			INS(&s->func, SpvOpSelectionMerge, d_swm, 0 /*None*/);
+			uint32_t *sw = malloc((size_t)(2 + 2 * nblk) * sizeof *sw);
+			sw[0] = sel; sw[1] = d_swm;
+			for (int k = 0; k < nblk; k++) { sw[2 + 2 * k] = (uint32_t)k; sw[3 + 2 * k] = d_lab[k]; }
+			ins(&s->func, SpvOpSwitch, 2 + 2 * nblk, sw);
+			free(sw);
+		}
 		for (int i = 0; i < n && ok; i++) {
 			const UOp *op = &code[i];
 			while (nbr && brstack[nbr - 1].end <= i) { INS(&s->func, SpvOpBranch, brstack[nbr - 1].merge); INS(&s->func, SpvOpLabel, brstack[nbr - 1].merge); nbr--; }
+			if (dispatch && blk_at[i] >= 0) {   /* a block starts here: the one before falls through into it */
+				if (d_open) { store(s, d_pc, c_uint(s, (uint32_t)blk_at[i])); INS(&s->func, SpvOpBranch, d_swm); }
+				INS(&s->func, SpvOpLabel, d_lab[blk_at[i]]); d_open = 1;
+			}
+			if (dispatch && op->op == OP_BR) {   /* a block's end: the next block is the target (taken) or the one after */
+				const uint32_t tb = c_uint(s, (uint32_t)blk_at[i + (int)op->imm]), fb = c_uint(s, (uint32_t)blk_at[i + 1]);
+				uint32_t next = tb;
+				if (op->pred_kind) {
+					uint32_t p = load(s, t_bool(s), pred_ptr(&g, op->pred_reg));
+					uint32_t taken = op->pred_kind == 1 ? p : result1(s, &s->func, SpvOpLogicalNot, t_bool(s), p);
+					next = result3(s, &s->func, SpvOpSelect, t_uint(s), taken, tb, fb);
+				}
+				store(s, d_pc, next); INS(&s->func, SpvOpBranch, d_swm); d_open = 0;
+				continue;
+			}
 			if (op->op == OP_BR) {
 				int target = i + (int)op->imm;
 				if (op->pred_kind == 0 || op->imm <= 0 || op->args[0] || target > n || (nbr && target > brstack[nbr - 1].end) || nbr >= 8) {
-					snprintf(m.err, sizeof m.err, "branch at instruction %d (%s, offset %d) outside the structured forms translated", i, op->pred_kind ? "predicated" : "unconditional", (int)op->imm); ok = 0; break;
+					snprintf(m.err, sizeof m.err, "branch at instruction %d (%s, offset %d) outside the structured forms translated%s", i, op->pred_kind ? "predicated" : "unconditional", (int)op->imm, dispatch_why); ok = 0; break;
 				}
 				uint32_t p = load(s, t_bool(s), pred_ptr(&g, op->pred_reg));
 				uint32_t taken = op->pred_kind == 1 ? p : result1(s, &s->func, SpvOpLogicalNot, t_bool(s), p);
@@ -2338,6 +2436,16 @@ SpirvModule usse_spirv_translate(const UsseProgram *prog, const UsseVertexLayout
 			}
 		}
 		while (ok && nbr) { INS(&s->func, SpvOpBranch, brstack[nbr - 1].merge); INS(&s->func, SpvOpLabel, brstack[nbr - 1].merge); nbr--; }   /* ranges ending at the program's end */
+		if (ok && dispatch) {   /* the dispatcher's tail: the last block ends the program; loop while a block is next */
+			if (d_open) { store(s, d_pc, c_uint(s, (uint32_t)nblk)); INS(&s->func, SpvOpBranch, d_swm); d_open = 0; }
+			INS(&s->func, SpvOpLabel, d_swm);
+			INS(&s->func, SpvOpBranch, d_cont);
+			INS(&s->func, SpvOpLabel, d_cont);
+			uint32_t more = result2(s, &s->func, SpvOpULessThan, t_bool(s), load(s, t_uint(s), d_pc), c_uint(s, (uint32_t)nblk));
+			INS(&s->func, SpvOpBranchConditional, more, d_header, d_merge);
+			INS(&s->func, SpvOpLabel, d_merge);
+		}
+		free(d_lab);
 		if (ok) { if (g.is_fragment) emit_frag_epilogue(&g, &ok); else emit_vert_epilogue(&g, &ok); }
 		if (g.motion && ok && !tap) store(s, g.var_mv_cur, load(s, t_v4, g.var_pos));   /* (this frame's position, as gl_Position got it) */
 		if (taps > 1 && ok && g.is_fragment) { uint32_t col = load(s, t_v4, g.var_frag_color); if (lerp) lerp_col[tap] = col; else pcf_acc = pcf_acc ? result2(s, &s->func, SpvOpFAdd, t_v4, pcf_acc, col) : col; }
@@ -2354,6 +2462,7 @@ SpirvModule usse_spirv_translate(const UsseProgram *prog, const UsseVertexLayout
 		store(s, g.var_frag_color, id);
 	} else if (taps > 1 && ok && g.is_fragment) store(s, g.var_frag_color, result2(s, &s->func, 142 /*OpVectorTimesScalar*/, t_v4, pcf_acc, c_float(s, 1.0f / (float)taps)));
 	g.var_sa = var_sa_now; g.pos_only = 0;
+	free(blk_at);
 	if (!ok && !m.err[0]) snprintf(m.err, sizeof m.err, "I/O setup failed: %s", g.why[0] ? g.why : "layout/colour type outside this pass's coverage");
 
 	if (max_smp >= 0 && smp_units_out) for (int i = 0; i < g.nsmp && i < max_smp; i++) smp_units_out[i] = g.smp_units[i];

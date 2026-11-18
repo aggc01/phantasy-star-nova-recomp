@@ -119,6 +119,25 @@ void plat_sleep_ns(uint64_t ns) {
 	Sleep((DWORD)((ns + 999999) / 1000000));
 }
 
+/* NVIDIA keeps its Vulkan/OpenGL shader disk cache as one file pair per exe NAME, 1 GiB each, and deletes other names'
+ * pairs whole when its folder is over the limit. Every Nativ game's program is game_host.exe, so two games (or two copies
+ * of one) would share and crowd one pair. Unless the player set a folder (__GL_SHADER_DISK_CACHE_PATH), the cache goes beside
+ * this program, nvidia-cache\, up to 4 GiB (__GL_SHADER_DISK_CACHE_SIZE). The driver reads these when it loads, so this runs
+ * before the first Vulkan call (gfx_gpu_create_device). Other vendors' drivers ignore the variables. */
+void plat_gpu_cache_private(void) {
+	char dir[MAX_PATH + 32], v[32];
+	if (GetEnvironmentVariableA("__GL_SHADER_DISK_CACHE_PATH", dir, sizeof dir)) return;
+	DWORD n = GetModuleFileNameA(0, dir, MAX_PATH);
+	if (!n || n >= MAX_PATH) return;
+	char *s = strrchr(dir, '\\');
+	if (!s) return;
+	strcpy(s + 1, "nvidia-cache");
+	CreateDirectoryA(dir, 0);
+	SetEnvironmentVariableA("__GL_SHADER_DISK_CACHE_PATH", dir);
+	if (!GetEnvironmentVariableA("__GL_SHADER_DISK_CACHE_SIZE", v, sizeof v)) SetEnvironmentVariableA("__GL_SHADER_DISK_CACHE_SIZE", "4294967296");
+	if (!GetEnvironmentVariableA("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", v, sizeof v)) SetEnvironmentVariableA("__GL_SHADER_DISK_CACHE_SKIP_CLEANUP", "1");
+	fprintf(stderr, "    gpu: NVIDIA shader cache in %s (its own folder: __GL_SHADER_DISK_CACHE_PATH)\n", dir);
+}
 void plat_random(void *buf, size_t n) {   /* the system's own generator (bcrypt.dll, loaded on first use: no import library needed) */
 	typedef LONG (WINAPI *GenRandom)(void *, PUCHAR, ULONG, ULONG);
 	static GenRandom gen; HMODULE m;

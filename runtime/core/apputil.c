@@ -98,6 +98,36 @@ static void h_save_slot_param(Cpu *c) {   /* (slot id, SceAppUtilSaveDataSlotPar
 	if (A1) memcpy(G(A1), p, SLOT_PARAM_SIZE);
 	RET(0);
 }
+/* sceAppUtilSaveDataSlotSearch (work buffer, SceAppUtilSaveDataSlotSearchCond * {type +0: 0 slots that exist, 1 empty
+ * ones; from +4; range +8}, result {hitNum +0, SceAppUtilSaveDataSlot *slotList +4 (16 bytes each: id, status, userParam,
+ * emptyParam)}, mount point): the slots this game has in savedata0 (their .slot<N> markers). Phantasy Star Nova counts its
+ * saves this way (0x81424d5c, a null list) before it offers CONTINUE; stubbed, a save would never have been seen. */
+static void h_save_slot_search(Cpu *c) {
+	if (!A1 || !A2) { RET(0x80100602u); return; }   /* (a missing parameter) */
+	uint32_t type = RD32(A1), from = RD32(A1 + 4), range = RD32(A1 + 8), list = RD32(A2 + 4), hits = 0;
+	if (range > 256) range = 256;
+	uint8_t p[SLOT_PARAM_SIZE];
+	for (uint32_t id = from; id < from + range; id++) {
+		const int exists = slot_read(id, p);
+		if (exists != (type == 0)) continue;
+		if (list) {   /* (status and userParam from the slot's SceAppUtilSaveDataSlotParam: +0 and +0x304) */
+			uint32_t st = 0, up = 0, e = list + 16 * hits;
+			if (exists) { memcpy(&st, p, 4); memcpy(&up, p + 0x304, 4); }
+			WR32(e, id); WR32(e + 4, st); WR32(e + 8, up); WR32(e + 12, 0);
+		}
+		hits++;
+	}
+	WR32(A2, hits);
+	RET(0);
+}
+/* sceAppUtilSaveDataMount (title id, passcode): another title's save data, read with that title's passcode -- Phantasy
+ * Star Nova looks for PSO2's (PCSG00141: a crew bonus) and its own demo's (an import offer). There are no other titles'
+ * saves here: "not found" (the game only tests for nonzero, 0x81874258). Stubbed as success, it handed out the PSO2 bonus
+ * and offered to import a demo save nobody has, a prompt that also stalled scripted runs (2026-11-18). */
+static void h_save_mount_other(Cpu *c) {
+	static int said; if (said++ < 4) fprintf(stderr, "    save data of another title (%s): not found -- no other title's saves here\n", A0 ? (char *)G(A0) : "?");
+	RET(0x80100641u);   /* (SAVEDATA_SLOT_NOT_FOUND's code; the game reads only "not 0") */
+}
 static void h_save_slot_set_param(Cpu *c) { RET(slot_write(A0, A1) == 0 ? 0 : 0x80100600u); }   /* (slot id, param, mount point): a slot not yet created is created */
 /* (SceAppUtilSaveDataFileSlot * (id +0, slotParam +4), SceAppUtilSaveDataFile[], count, mount point, *required KB)
  * file: path +0, buf +4, size +8, offset +16 (64-bit), mode +24; 64 bytes each */
@@ -483,7 +513,75 @@ static void h_app_param_string(Cpu *c) {
 	const char *t = getenv("RECOMP_TITLE"); snprintf((char *)G(A2), A3, "%s", t ? t : "");
 	RET(0);
 }
+/* ---- the text entry dialog (SceImeDialog): the system keyboard over the game (Phantasy Star Nova names its character
+ * with it). For now it answers at once, as if the player pressed Enter on the text shown: the game's initial text when
+ * it gives one, else RECOMP_IME_TEXT, else "Nova" -- cut to the dialog's maximum length. (Stubbed, Init/GetStatus
+ * returned 0: the game waited forever for a dialog that never finished.) SceImeDialogParam: maxTextLength +0x2c,
+ * initialText +0x30 and inputTextBuffer +0x34 (UTF-16); SceImeDialogResult: result +0, button +4 (ENTER 2). */
+static int ime_state;   /* 0 none, 2 finished (SCE_COMMON_DIALOG_STATUS_*) */
+/* the text a keyboard answers with: the game's initial text, else RECOMP_IME_TEXT, else "Nova", cut to maxlen, written
+ * (UTF-16, terminated) into buf; its length, and an ASCII copy for the log */
+static uint32_t ime_fill(uint32_t init, uint32_t buf, uint32_t maxlen, char shown[64]) {
+	uint16_t text[64]; uint32_t n = 0;
+	if (init) while (n < 63 && RD16(init + 2 * n)) { text[n] = RD16(init + 2 * n); n++; }
+	if (!n) { const char *d = getenv("RECOMP_IME_TEXT"); if (!d || !*d) d = "Nova"; while (n < 63 && d[n]) { text[n] = (uint8_t)d[n]; n++; } }   /* (ASCII: a name typed on a keyboard) */
+	if (maxlen && n > maxlen) n = maxlen;
+	if (buf) { for (uint32_t k = 0; k < n; k++) WR16(buf + 2 * k, text[k]); WR16(buf + 2 * n, 0); }
+	for (uint32_t k = 0; k < n; k++) shown[k] = text[k] < 0x80 ? (char)text[k] : '?';
+	shown[n] = 0;
+	return n;
+}
+static void h_ime_dialog_init(Cpu *c) {
+	if (!A0) { RET(0x80020402u); return; }   /* SCE_COMMON_DIALOG_ERROR_NULL */
+	if (ime_state) { RET(0x80020001u); return; }   /* SCE_COMMON_DIALOG_ERROR_BUSY */
+	char shown[64]; uint32_t maxlen = RD32(A0 + 0x2c), n = ime_fill(RD32(A0 + 0x30), RD32(A0 + 0x34), maxlen, shown);
+	fprintf(stderr, "    ime dialog: answered at once with \"%s\" (%u chars, max %u)\n", shown, n, maxlen);
+	ime_state = 2;
+	RET(0);
+}
+
+/* ---- the in-game keyboard (SceIme: sceImeOpen / sceImeUpdate / sceImeClose). Phantasy Star Nova names its character
+ * with it, through a table of function pointers (so no call site names these imports). SceImeParam as the game fills
+ * it (0x81216226..0x81216272): arg +0x20, handler +0x24, initialText +0x2c, maxTextLength +0x30, inputTextBuffer +0x34.
+ * The game then polls sceImeUpdate for events to its handler (0x812163b8's switch): 0 OPEN, 1 UPDATE_TEXT (sets its
+ * "text changed" flag), 2 caret and 3 size (ignored), 4 PRESS_CLOSE and 5 PRESS_ENTER (both: finished). Its per-frame
+ * code copies the text only while the keyboard is still open after an UPDATE_TEXT, so the answer comes over separate
+ * updates as if typed: OPEN, then the text (ime_fill) with UPDATE_TEXT, then PRESS_ENTER a few updates later.
+ * (Stubbed, the name screen waited forever with an empty box, 2026-11-18.) A real typing box in the overlay is later. */
+static struct { int open, step; uint32_t arg, handler, init, maxlen, buf, ev; } ime;
+static void ime_event(Cpu *c, uint32_t id, uint32_t caret) {   /* SceImeEvent: id +0, then the text parameter (preedit index, length, caret, str) */
+	memset(G(ime.ev), 0, 64); WR32(ime.ev, id);
+	if (id == 1) { WR32(ime.ev + 12, caret); WR32(ime.ev + 16, ime.buf); }
+	if (ime.handler) guest_call(c, ime.handler, ime.arg, ime.ev);
+}
+static void h_ime_open(Cpu *c) {
+	if (!A0) { RET(0x80100702u); return; }
+	if (ime.open) { RET(0x80100701u); return; }
+	ime.arg = RD32(A0 + 0x20); ime.handler = RD32(A0 + 0x24); ime.init = RD32(A0 + 0x2c); ime.maxlen = RD32(A0 + 0x30); ime.buf = RD32(A0 + 0x34);
+	if (!ime.ev) ime.ev = guest_alloc(64, 16);
+	ime.open = 1; ime.step = 0;
+	fprintf(stderr, "    ime: keyboard opened (handler %#x, max %u chars)\n", ime.handler, ime.maxlen);
+	RET(0);
+}
+static void h_ime_update(Cpu *c) {
+	if (!ime.open) { RET(0); return; }
+	const int s = ime.step++;
+	if (s == 0) ime_event(c, 0, 0);
+	else if (s == 2) { char shown[64]; uint32_t n = ime_fill(ime.init, ime.buf, ime.maxlen, shown); ime_event(c, 1, n); fprintf(stderr, "    ime: typed \"%s\"\n", shown); }
+	else if (s == 10) { ime_event(c, 5, 0); fprintf(stderr, "    ime: Enter\n"); }
+	RET(0);
+}
+static void h_ime_close(Cpu *c) { ime.open = 0; RET(0); }
+static void h_ime_dialog_status(Cpu *c) { RET((uint32_t)ime_state); }
+static void h_ime_dialog_result(Cpu *c) { if (!A0) { RET(0x80020402u); return; } memset(G(A0), 0, 36); WR32(A0 + 4, 2); RET(0); }   /* result 0, button ENTER */
+static void h_ime_dialog_term(Cpu *c) { ime_state = 0; RET(0); }
+static void h_ime_dialog_abort(Cpu *c) { ime_state = 0; RET(0); }
+
 const HleEntry hle_apputil[] = {
+	{"sceImeDialogInit", h_ime_dialog_init}, {"sceImeDialogGetStatus", h_ime_dialog_status}, {"sceImeDialogGetResult", h_ime_dialog_result},
+	{"sceImeDialogTerm", h_ime_dialog_term}, {"sceImeDialogAbort", h_ime_dialog_abort},
+	{"sceImeOpen", h_ime_open}, {"sceImeUpdate", h_ime_update}, {"sceImeClose", h_ime_close},
+	{"sceAppUtilSaveDataSlotSearch", h_save_slot_search}, {"sceAppUtilSaveDataMount", h_save_mount_other}, {"sceAppUtilSaveDataUmount", h_zero_ok},
 	{"sceAppMgrAppParamGetString", h_app_param_string},
 	{"sceAppMgrReceiveSystemEvent", h_receive_system_event},
 	{"sceAppUtilSystemParamGetInt", h_system_param_int}, {"_sceAppMgrGetAppState", h_app_state}, {"sceSysmoduleIsLoaded", h_zero_ok},

@@ -590,7 +590,7 @@ static void *game(void *arg) {
 	if (getenv("RECOMP_IMPORTS")) {   /* RECOMP_IMPORTS=1: every import of the game and its modules with how the host resolves it, then exit -- the proactive sweep for stubs (a stub returns 0 and says nothing else) */
 		static const char *names[8192]; int n = 0;
 		for (int r = 0; r < 2; r++) {
-			uint32_t lo = r ? 0x88000000u : 0x81000000u, hi = r ? 0x98000000u : 0x82000000u;   /* the modules: 16 slots of 0x01000000 from 0x88000000 (libfios2 is the fourth, at 0x8b000000) */
+			uint32_t lo = r ? 0x88000000u : 0x81000000u, hi = r ? 0x98000000u : 0x88000000u;   /* the modules: 16 slots of 0x01000000 from 0x88000000 (libfios2 is the fourth, at 0x8b000000); the main program up to them (Phantasy Star Nova's code runs past 0x82000000, where this scan once stopped and missed most of its imports) */
 			for (uint32_t a = lo; a < hi && n < 8192; a += 2) { const char *nm = import_name_any(a); if (!nm) continue; int k; for (k = 0; k < n; k++) if (names[k] == nm || !strcmp(names[k], nm)) break; if (k == n) names[n++] = nm; }
 		}
 		int nh = 0, nm = 0, ns = 0;
@@ -659,6 +659,7 @@ static void builtin_env(void) {
 }
 int main(int argc, char **argv) {
 	builtin_env();
+	plat_gpu_cache_private();   /* first, before anything can load a GPU driver (SDL's video init may enumerate Vulkan) */
 #ifdef __linux__
 	/* RECOMP_DEBUGGABLE=1: let any process attach a debugger (Yama ptrace_scope 1 only allows the
 	 * parent): `gdb -p` / `eu-stack -p` thread dumps of a stalled run without root */

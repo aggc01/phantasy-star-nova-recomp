@@ -26,6 +26,10 @@
                                             update layered over it (app0_patched, hard links) when
                                             the pack plays that version; records which version it is
   vitarecomp versions  <title>              the versions the game's pack plays, and which this copy is
+  vitarecomp repatch   <title> <folder>     a rePatch folder (ux0:rePatch/<title>: plain files, e.g. a fan
+                                            translation's archives) copied to dump/decrypted/<title>/repatch0 and
+                                            layered over the game by import (app0_repatched); RECOMP_NO_REPATCH=1
+                                            at import plays without it
   vitarecomp analyze   <title>              functions, code ranges and the memory image of the main
                                             module (analyze.py, seconds; ANALYZER=ghidra: the old
                                             Ghidra export, minutes to hours)
@@ -388,6 +392,47 @@ class Game:
         return self.RUNNER + [exe]
 
 
+def cmd_repatch(g, folder):
+    """a rePatch folder kept beside the game (a copy: the player's files are never linked into the library, which a
+    write could change), then imported over the game and its update"""
+    if not folder or not os.path.isdir(folder): die(f"vitarecomp repatch {g.T}: a folder (ux0:rePatch/{g.T}, copied off the Vita)")
+    if os.path.basename(os.path.normpath(folder)) != g.T and os.path.isdir(os.path.join(folder, g.T)): folder = os.path.join(folder, g.T)
+    dst = os.path.join(g.W, "repatch0"); tmp = dst + f".new.{os.getpid()}"
+    rmtree(tmp); shutil.copytree(folder, tmp); rmtree(dst); os.rename(tmp, dst)
+    n = sum(len(fs) for _, _, fs in os.walk(dst)); say(f"{g.T}: its rePatch folder kept ({n} files) -> {dst}")
+    cmd_import(g, "")
+
+
+def repatch_keep(g, game, rp, out):
+    """REPATCH_KEEP = "<archive>:<entry> ..." (pack.toml): entries of the game's own CRI archive that the rePatch's copy of
+    that archive dropped, carried over into a merged copy (pipeline/cri/cpk_merge.py) that replaces the rePatch's in the
+    layer. A rePatch replaces whole files, so an entry an official update added and the translators' archive lacks is
+    found nowhere: Phantasy Star Nova's English rePatch has no tex_nova_ui_common.aif (only the 1.05 update's patch archive
+    does), and the game drew noise on Filldia and its NOW LOADING screen (2026-11-18, docs/psnova/journal-2026-11-18.md).
+    The merged archive is kept in $W/repatch_merged/ and rebuilt only when an input is newer."""
+    want = {}
+    for item in (g.REPATCH_KEEP or "").split():
+        arc, _, entry = item.partition(":")
+        if arc and entry: want.setdefault(arc, []).append(entry)
+    for arc, entries in want.items():
+        base, own, layered = os.path.join(rp, arc), os.path.join(game, arc), os.path.join(out, arc)
+        if not (os.path.isfile(base) and os.path.isfile(own)):
+            say(f"{g.T}: REPATCH_KEEP {arc}: not in both the rePatch and the game -- skipped"); continue
+        merged = os.path.join(g.W, "repatch_merged", arc)
+        os.makedirs(os.path.dirname(merged), exist_ok=True)
+        stamp = merged + ".keep"   # what the merged copy was made with: rebuilt when the list or an input changes
+        key = " ".join(sorted(entries)) + f" {os.path.getmtime(base):.0f} {os.path.getmtime(own):.0f}"
+        if not (os.path.isfile(merged) and os.path.isfile(stamp) and open(stamp).read() == key):
+            args = [PY, os.path.join(ROOT, "pipeline", "cri", "cpk_merge.py"), base, merged + ".tmp"]
+            for e in entries: args += ["--add", f"{own}:{e}"]
+            run(args)
+            os.replace(merged + ".tmp", merged)
+            with open(stamp, "w") as f: f.write(key)
+        remove_file(layered)
+        os.link(merged, layered)   # (a hard link, as the rest of the layer)
+        say(f"{g.T}: {arc}: the rePatch's archive plus {', '.join(entries)} from the game's own -> {merged}")
+
+
 def cmd_import(g, src):
     W, OUT = g.W, g.OUT
     if not src:   # the title's own copy (add's): the game, with its update layered over it when the pack plays that version
@@ -404,6 +449,16 @@ def cmd_import(g, src):
                 src = os.path.join(W, "app0_patched")
             else:
                 say(f"{g.T}: its update ({pv}) isn't a version packs/{g.PACK}/pack.toml plays yet -- the game runs without it")
+        # a rePatch folder kept for the title (vitarecomp repatch): its plain files over the game and its update, as the
+        # console's rePatch plugin serves ux0:rePatch/<title> in place of app0 (a fan translation's archives); the layer is
+        # its own folder, app0_repatched, so app0_patched stays the game as Sony shipped it. RECOMP_NO_REPATCH=1: without it
+        rp = os.path.join(W, "repatch0")
+        if os.path.isdir(rp) and not ENV.get("RECOMP_NO_REPATCH"):
+            for f in ("eboot.bin", "sce_module"):
+                if os.path.exists(os.path.join(rp, f)): say(f"{g.T}: its rePatch folder replaces {f}: not supported (the program is the game's own) -- ignored")
+            run([PY, os.path.join(R, "packs.py"), "layer", src, rp, os.path.join(W, "app0_repatched")], env=env_with(TOOLS_ENV))
+            repatch_keep(g, src, rp, os.path.join(W, "app0_repatched"))
+            src = os.path.join(W, "app0_repatched"); say(f"{g.T}: its rePatch files layered over the game -> {src}")
     os.makedirs(os.path.join(W, "elf"), exist_ok=True); os.makedirs(os.path.join(OUT, "fs"), exist_ok=True)
     app0 = os.path.join(OUT, "fs", "app0")
     if os.path.isfile(os.path.join(src, "eboot.bin.elf")):   # decrypted on this machine (add): each ELF beside its SELF, and the whole app0 (sce_sys too) read in place
@@ -922,7 +977,7 @@ def main(argv):
     if cmd == "add": cmd_add(T, argv[2:]); return 0
     if cmd == "dist": cmd_dist(T); return 0
     if cmd == "report": cmd_report(T); return 0
-    if cmd not in ("import", "analyze", "recompile", "build", "ready", "run", "test", "capture", "replay", "accept", "check", "coverage", "verify", "recipes", "versions"):
+    if cmd not in ("import", "analyze", "recompile", "build", "ready", "run", "test", "capture", "replay", "accept", "check", "coverage", "verify", "recipes", "versions", "repatch"):
         usage(); return 1
     g = Game(T, cmd)
     arg3 = argv[2] if len(argv) > 2 else ""
@@ -949,6 +1004,7 @@ def main(argv):
     elif cmd == "verify": cmd_verify(g, arg3)
     elif cmd == "recipes": cmd_recipes(g)
     elif cmd == "versions": cmd_versions(g)
+    elif cmd == "repatch": cmd_repatch(g, arg3)
     return 0
 
 

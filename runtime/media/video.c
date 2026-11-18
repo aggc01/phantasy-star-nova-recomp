@@ -100,10 +100,14 @@ static void h_avcdec_query_mem(Cpu *c) {   /* (codec, const SceAvcdecQueryDecode
 	uint32_t w = RD32(q), h = RD32(q + 4), refs = RD32(q + 8);
 	if (!w || !h || w > 1920 || h > 1088 || refs > 16) { RET(SCE_AVCDEC_ERROR_INVALID_PARAM); return; }
 	uint32_t frame = ((w + 15) & ~15u) * ((h + 15) & ~15u) * 3 / 2;
-	/* a frame per reference frame, 256 KiB aligned (Vita3K's figure). The host decoder keeps its own memory, so
-	 * this only has to fit: Uncharted sizes its codec-engine block as this + the library's + 1 MiB of slack and
-	 * then takes the two at 256 KiB and 1 MiB alignment -- a larger figure failed the second allocation */
-	WR32(info, (frame * (refs ? refs : 1) + 0x3ffffu) & ~0x3ffffu);
+	/* a frame per reference frame (Vita3K's figure), in whole MiB. The host decoder keeps its own memory, so this only
+	 * has to fit how the AvPlayer carves its block (sysmem.c block_align: 1 MiB aligned, as on the console): the
+	 * library's 0x80000 at the base, this at the next 1 MiB boundary, in a block of library + this rounded up to MiB --
+	 * which only holds when this is a whole MiB or ends more than 0x80000 into one. Phantasy Star Nova's second movie
+	 * (0x240000 at 256 KiB rounding, a 0x300000 block) lost its video that way (2026-11-18). Uncharted's own sizing
+	 * (this + the library's + 1 MiB of slack) fits either way now that the blocks are aligned; at 256 KiB rounding it
+	 * once failed only because its block wasn't */
+	WR32(info, (frame * (refs ? refs : 1) + 0xfffffu) & ~0xfffffu);
 	RET(0);
 }
 

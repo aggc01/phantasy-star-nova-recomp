@@ -78,6 +78,7 @@ void plat_sleep_ns(uint64_t ns) {
 	while (nanosleep(&ts, &ts) && errno == EINTR) ;
 }
 
+void plat_gpu_cache_private(void) {}   /* (Windows only: platform_win32.c) */
 void plat_random(void *buf, size_t n) {
 	FILE *f = fopen("/dev/urandom", "rb");
 	size_t got = f ? fread(buf, 1, n, f) : 0;

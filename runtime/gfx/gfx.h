@@ -240,6 +240,16 @@ void gfx_guest_writing(uint32_t addr, uint32_t len);
 void gfx_guest_written(uint32_t addr, uint32_t len);
 void gfx_gpu_guest_reading(uint32_t addr, uint32_t len);   /* the host is about to READ guest memory (a transfer's source): overlapping GPU-drawn targets download first, nothing is marked changed */
 void gfx_guest_reading(uint32_t addr, uint32_t len);
+/* a host write that replaces guest bytes outright -- a file read into guest memory (io.c, fios.c). Unlike
+ * gfx_guest_writing, nothing downloads first: memory a file is read into is never a live render target, but it can be
+ * one the game has freed and reused, and downloading that stale target would paint old pixels over textures loaded
+ * next to it (Phantasy Star Nova's UI atlas, 2026-11-18). replacing: pending readbacks over the range land first (so they
+ * can't land after the read) and overlapping colour targets drop their GPU pixels (nothing downloads into the buffer during
+ * the read); replaced: the same again for one a draw dirtied meanwhile. Guest memory is newest: re-upload before next use. */
+void gfx_gpu_guest_replacing(uint32_t addr, uint32_t len);
+void gfx_gpu_guest_replaced(uint32_t addr, uint32_t len);
+void gfx_guest_replacing(uint32_t addr, uint32_t len);
+void gfx_guest_replaced(uint32_t addr, uint32_t len);
 /* sceGxmTransferDownscale on the GPU when its source is a GPU colour target (gfx_gpu.c): 1 done, 0 the caller's CPU path */
 int gfx_gpu_transfer_downscale(uint32_t src, uint32_t sw, uint32_t sh, uint32_t sstride, uint32_t dst, uint32_t dstride);
 int gfx_transfer_downscale(uint32_t src, uint32_t sw, uint32_t sh, uint32_t sstride, uint32_t dst, uint32_t dstride);
