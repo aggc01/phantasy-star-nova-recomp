@@ -140,6 +140,7 @@ message file extracted from both archives) lists and extracts CRI CPK archives, 
 | Character creation | all steps, skinned characters on the GPU (shader loops), the name typed through SceIme ("Nova" by default, `RECOMP_IME_TEXT`) | proven (screenshots) |
 | Sound (NGS, ATRAC9) | **starts** since the NGS memory-size fix (CRI ADX2 refused > 0x1ff0): 11 NGS systems, the game's port carries the title music (rms 1,500-3,700); its mixer needed `vqmovn`/`vzip`/q `vshr.u64` in the recompiler (journal, sound section) | single run (levels, not by ear) |
 | After "Start the Game" | **fixed** (2026-11-18 afternoon): the abort was a recompiler bug -- tail calls set lr (journal, abort section; recomp.py `tail()`). Now: the save, the warp cutscene, the ship corridor and Rietheia's dialogue | single run (screenshots) |
+| Training arena (tutorial) | **all quests cleared by the scripted play** -- move to the arrows, attack, avoid/block, annihilate -- and on to the next story scene (Lutina) by frame ~27,600 (take 7; `dev/psnova/make_arena_inputs.py`) | recording run (take 7) |
 | Saves (savedata0 in `recomp/fs/`) | the character-creation save writes (569,108 bytes through the save dialog, slot 0); a copy in `dump/saves/after-creation-2026-11-18/` for runs that CONTINUE; loading not tried | single run |
 | Dialogue box, HUD, Filldia, Nova's armour | **fixed** (2026-11-18 evening): the renderer downloaded character creation's stale RGBA targets over textures the game later copied into the same memory; downloads now keep the pages the game rewrote (gfx_gpu.c `kept_pages_find`, journal "Noisy textures") | two runs (screenshots), reviewed by two agents |
 | NOW LOADING screen (and the UI file the rePatch dropped) | **fixed**: the English rePatch's patch archive lacks `tex_nova_ui_common.aif`; `REPATCH_KEEP` (pack.toml) makes import merge it in (`pipeline/cri/`, `dump/decrypted/PCSG00351/repatch_merged/`) | three runs |
@@ -199,8 +200,9 @@ A Japanese release usually confirms with **Circle (C)** and cancels with **Cross
    SceIme with a fixed answer ("Nova", `RECOMP_IME_TEXT`); a real typing box is the fork's 340a30f (below).
 1a. Line primitives (`prim LINES`) are skipped by both renderers; find what the game draws with them (from frame
    15,565, into a U8 target) before deciding whether they matter.
-1b. The arena script: the left stick works, but the scripted route (`dev/psn-logs/sticks-37.txt`: left, then forward)
-   doesn't reach the arrows; the real player goes round the left side of the crate field (reference 14:32-14:44).
+1b. Done: the arena route (`dev/psnova/make_arena_inputs.py`: over the crates with jumps as the real player does,
+   stepping out of and back into the target area, then run-and-attack cycles) clears every tutorial quest and reaches
+   the next story scene by frame ~27,600 (take 7).
 2. Make `sceAppUtilSaveDataMount` answer "not found" for another title's save (no free PSO2 bonus) unless the user
    wants the bonus.
 3. The two shaders the translator refused: find which draws use them.
