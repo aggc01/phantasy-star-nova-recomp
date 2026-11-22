@@ -753,7 +753,7 @@ static void apply_swizzle(uint32_t format, int ncomp, float o[4]) {
  * SWIZZLE4 ones), 0 for formats whose components are placed by the decode itself */
 static int swizzle_ncomp(uint32_t base) {
 	return base == 0x00000000u || base == 0x01000000u || base == 0x09000000u || base == 0x0a000000u || base == 0x0b000000u || base == 0x12000000u || base == 0x88000000u ? 1
-	     : base == 0x0c000000u || base == 0x0d000000u || base == 0x1b000000u || base == 0x02000000u || base == 0x04000000u || (base >= 0x85000000u && base <= 0x87000000u) ? 4
+	     : base == 0x0c000000u || base == GFX_TEX_P8 || base == 0x0d000000u || base == 0x1b000000u || base == 0x02000000u || base == 0x04000000u || (base >= 0x85000000u && base <= 0x87000000u) ? 4
 	     : base == 0x98000000u || base == 0x99000000u ? 3 : 0;
 }
 static float small_float(uint32_t v, int mbits);
@@ -918,7 +918,7 @@ static uint32_t tex_bytes_per_texel(uint32_t base) {
 	case 0x05000000u: case 0x09000000u: case 0x0a000000u: case 0x0b000000u: case 0x07000000u:
 	case 0x02000000u: case 0x04000000u: return 2;                                          /* U5U6U5/U16/S16/F16/U8U8/U4U4U4U4/U1U5U5U5 */
 	case 0x98000000u: case 0x99000000u: return 3;                                          /* U8U8U8 / S8S8S8: three bytes, no padding */
-	case 0x00000000u: return 1;                                                            /* U8 */
+	case 0x00000000u: case GFX_TEX_P8: return 1;                                           /* U8 / P8 indices */
 	default: return 0;                                                                     /* block-compressed / PVRTC / unknown: no flat per-face stride */
 	}
 }
@@ -1091,8 +1091,11 @@ static void texel_raw(const GfxTexture *t, float u, float v, float out[4]) {
 	int w = t->width ? t->width : 1, h = t->height ? t->height : 1;
 	int x = wrap_coord((int)(u * w), w, t->u_mode), y = wrap_coord((int)(v * h), h, t->v_mode);
 	uint32_t base = t->format & 0xff000000u, at = t->data;
-	if (base == 0x0c000000u) {           /* U8U8U8U8, ABGR: bytes R G B A */
-		uint32_t p = RD32(at + 4 * texel_index(t, x, y));
+	if (base == 0x0c000000u || base == GFX_TEX_P8) {   /* Done by Codex. Apply the same component swizzle to RGBA and palette entries. */
+		uint32_t index = texel_index(t, x, y);
+		uint32_t p = base == GFX_TEX_P8
+			? (t->palette ? RD32(t->palette + 4u * RD8(at + index)) : 0)
+			: RD32(at + 4u * index);
 		out[0] = (p & 0xff) / 255.f; out[1] = ((p >> 8) & 0xff) / 255.f; out[2] = ((p >> 16) & 0xff) / 255.f; out[3] = (p >> 24) / 255.f;
 	} else if (base == 0x98000000u || base == 0x99000000u) {   /* U8U8U8 / S8S8S8: three bytes a texel (Killzone's colour-grading textures in its final composite:
 		 * undecoded, every texel came out as the fallback magenta and so did the whole frame) */
@@ -2291,6 +2294,42 @@ static void render_points_interp(const GfxDraw *d, const UsseProgram *vp, DrawRe
 		record_tri(&q[0], &q[1], &q[2]); record_tri(&q[1], &q[3], &q[2]);
 	}
 }
+/* SCE_GXM_PRIMITIVE_LINES: each pair of vertices a line, drawn as a quad one line width wide (the draw's point/line width,
+ * 1 by default) and half a width longer at each end, in screen pixels: the clip-space corners are the endpoints moved
+ * across (and along) the line by pixels over the viewport's scale, times w (render_points_interp's mapping). Two triangles
+ * per line, the varyings of each end carried to its corners. Phantasy Star Nova outlines its character-shadow image with
+ * four lines at its edge pixels every frame (draw 12 of its shadow pass, white = lit) so that the ground the projected
+ * image doesn't reach repeats a lit edge texel (the sampler clamps); with lines dropped the edge kept the character's
+ * head and feet, and the shadow ran on as long straight dark bands across the ground (2026-11-20, user's F12 captures
+ * frame_5110/5908, docs/psnova/picture-faults.md). */
+static void render_lines_interp(const GfxDraw *d, const UsseProgram *vp, DrawRec *r) {
+	const UsseVertexLayout *vl = r->vlayout;
+	r->d.cull = 0;   /* a line has no winding */
+	float kx, ky; int ydown, xleft = 0;
+	if (d->viewport_set && d->viewport_disabled) { kx = ky = 1; ydown = 1; }
+	else if (d->viewport_set) { kx = fabsf(d->vp_xscale); ky = fabsf(d->vp_yscale); ydown = d->vp_yscale > 0; xleft = d->vp_xscale < 0; }
+	else { kx = scene_target.width * 0.5f; ky = scene_target.height * 0.5f; ydown = 0; }
+	if (!(kx > 0)) kx = 1;
+	if (!(ky > 0)) ky = 1;
+	const float half = 0.5f * (float)(d->point_line_width ? d->point_line_width : 1);
+	const float sxs = xleft ? -1.0f : 1.0f, sys = ydown ? 1.0f : -1.0f;   /* clip -> screen direction signs */
+	for (uint32_t i = 0; i + 1 < d->count; i += 2) {
+		Vert a, b; fetch_interp(d, vp, vl, &r->vdraw, index_at(d, i), &a); fetch_interp(d, vp, vl, &r->vdraw, index_at(d, i + 1), &b);
+		if (!(a.w > 0) || !(b.w > 0)) continue;   /* (an end behind the eye: no clipping here) */
+		float ax = a.x / a.w * kx * sxs, ay = a.y / a.w * ky * sys, bx = b.x / b.w * kx * sxs, by = b.y / b.w * ky * sys;   /* screen pixels */
+		float dx = bx - ax, dy = by - ay, len = sqrtf(dx * dx + dy * dy);
+		if (!(len > 0)) { dx = 1; dy = 0; } else { dx /= len; dy /= len; }
+		const float px = -dy * half, py = dx * half, ex = dx * half, ey = dy * half;   /* across, along (screen pixels) */
+		Vert q[4];
+		for (int c = 0; c < 4; c++) {   /* 0 a-left, 1 a-right, 2 b-left, 3 b-right */
+			const Vert *e = c < 2 ? &a : &b; const float side = (c & 1) ? 1.0f : -1.0f, end = c < 2 ? -1.0f : 1.0f;
+			q[c] = *e;
+			q[c].x += (side * px + end * ex) / kx * sxs * e->w;
+			q[c].y += (side * py + end * ey) / ky * sys * e->w;
+		}
+		record_tri(&q[0], &q[1], &q[2]); record_tri(&q[1], &q[3], &q[2]);
+	}
+}
 /* RECOMP_SHADERS=interp: run the draw's own vertex/fragment GXP programs. Returns 0 (caller
  * should fall back to the stand-in path) if either program uses an instruction usse.c doesn't
  * support yet. */
@@ -2315,6 +2354,7 @@ static int render_interp(const GfxDraw *d) {
 	memset(&scratch, 0, sizeof scratch); usse_run_secondary(fp, &scratch, &r->fdraw);
 	if (tr) { usse_set_trace(0); trace_vprog = vp; }
 	if (gfx_prim_kind(d->prim) == GFX_PRIM_POINTS) { render_points_interp(d, vp, r); return 1; }
+	if (gfx_prim_kind(d->prim) == GFX_PRIM_LINES) { static int no_lines = -1; if (no_lines < 0) no_lines = getenv("RECOMP_NO_LINES") != 0; if (!no_lines) render_lines_interp(d, vp, r); return 1; }
 	/* triangles, strips (alternate ones rewound) and fans: gfx.h's gfx_prim_tri, as gfx_gpu.c expands them */
 	uint32_t ntri = gfx_prim_tris(d->prim, d->count), pos[3];
 	Vert a, b, cc;

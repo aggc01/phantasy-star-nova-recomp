@@ -133,6 +133,7 @@ static uint64_t vb_now(void); static uint64_t vb_setbuf;   /* below: the vblank 
 static void vb_sleep_to_edge(uint64_t edge);   /* (below) */
 static uint32_t swap_seen;      /* the largest swap interval a SetFrameBuf wait asked for since the last SetFrameBuf: how long that frame stays up */
 static uint64_t present_edge;   /* the edge the last frame went to the window at (h_set_frame_buf) */
+static __thread uint64_t setbuf_latched;   /* this thread's last SetFrameBuf slept to this edge and presented there (h_wait_vblank) */
 /* SceDisplayFrameBuf: size, base, pitch, pixel format, width, height */
 /* RECOMP_HITCH_LOG=ms: every presented frame that took longer than that (SetFrameBuf to SetFrameBuf, real time)
  * logs what the host did in it -- the GPU backend's first-use work and waits (gfx_gpu_last_frame_costs) and
@@ -189,7 +190,7 @@ static void h_set_frame_buf(Cpu *c) {
 	 * (headless runs and the gate pace as before); RECOMP_PRESENT_AT_VBLANK=0|1 overrides. */
 	{ static int at_vb = -1; if (at_vb < 0) { extern int window_active(void); const char *e = getenv("RECOMP_PRESENT_AT_VBLANK"); at_vb = e && *e ? atoi(e) != 0 : window_active(); }
 	  uint32_t hold = swap_seen ? swap_seen : 1; swap_seen = 0;
-	  if (at_vb) { uint64_t edge = vb_setbuf + 1; if (present_edge && present_edge + hold > edge) edge = present_edge + hold; vb_sleep_to_edge(edge); present_edge = edge; }
+	  if (at_vb) { uint64_t edge = vb_setbuf + 1; if (present_edge && present_edge + hold > edge) edge = present_edge + hold; vb_sleep_to_edge(edge); present_edge = edge; setbuf_latched = edge; }
 	  static int ptrace = -1; if (ptrace < 0) ptrace = getenv("RECOMP_PRESENT_TRACE") != 0;   /* RECOMP_PRESENT_TRACE=1: each present's distance from the one before (the cadence the window gets) */
 	  static uint64_t plast; uint64_t pnow = raw_us(); if (ptrace && plast) fprintf(stderr, "    present: +%.1f ms (set +%.1f ms)\n", (pnow - plast) / 1e3, hitch_dur / 1e3); plast = pnow; }
 	int b = sched_block_begin();   /* presenting is the display hardware's work: no run slot meanwhile (RECOMP_SCHED) */
@@ -265,7 +266,7 @@ static void vb_sleep_until(uint64_t at) {   /* at: now_us() time; the thread is 
 }
 static void vb_sleep_to_edge(uint64_t edge) { (void)vb_now(); vb_sleep_until(vblank0 + edge * vb_period); }   /* (vb_now starts the grid if nothing waited yet) */
 static void vb_wait_until(uint64_t target, uint32_t count) {
-	reads_in_row = 0;
+	reads_in_row = 0; setbuf_latched = 0;   /* (h_wait_vblank's latch: only the first display wait after SetFrameBuf) */
 	uint64_t now = vb_now(); if (target <= now) target = now + 1;
 	uint64_t t = now_us(), at = vblank0 + target * vb_period;
 	if (getenv("RECOMP_VBLANK_TRACE")) { static int k; if (k++ < 60) fprintf(stderr, "    vblank wait: edge %llu (now %llu), sleeping %lld us (frame %llu)\n", (unsigned long long)target, (unsigned long long)now, (long long)(at > t ? at - t : 0), (unsigned long long)frames); }
@@ -284,7 +285,23 @@ static void vb_wait_until(uint64_t target, uint32_t count) {
  * between waits is part of the n) -- counted from "now" instead, Unit 13's 30 fps flip callback
  * (Multi(2) after SetFrameBuf) took three or four edges a frame: 50-68 ms. sceDisplayWaitSetFrameBuf
  * / Multi(n): n edges after the one the last SetFrameBuf lands on. */
-static void h_wait_vblank(Cpu *c) { vb_wait_until(vb_now() + 1, 1); RET(0); }
+/* After a present-at-vblank SetFrameBuf on the same thread, the next WaitVblankStart is the vblank the flip latched at --
+ * on the console, SetFrameBuf(NEXTFRAME) then WaitVblankStart returns at that one edge. Here SetFrameBuf already slept to
+ * it and presented, so the wait returns at once (the present's own time is the display hardware's, not the game's).
+ * Waiting for the edge after it instead made every flip of a game that pairs the two take two edges: Phantasy Star Nova's
+ * flip callback (fn_81aa9412: SetFrameBuf(fb, 1), WaitVblankStart) was held to 30 fps in a window whatever the game asked
+ * for, and to three edges whenever the present ran long (2026-11-19, docs/psnova/frame-rate.md). Headless runs never
+ * present at the vblank and are unchanged. RECOMP_SETBUF_WAIT_LATCHED=0: the wait after it as before. */
+static void h_wait_vblank(Cpu *c) {
+	static int latched_on = -1; if (latched_on < 0) { const char *e = getenv("RECOMP_SETBUF_WAIT_LATCHED"); latched_on = !(e && *e == '0'); }
+	const uint64_t l = setbuf_latched; setbuf_latched = 0;
+	if (latched_on && l && vb_now() <= l + 1) {
+		reads_in_row = 0;
+		if (overlay_paused()) { int b = sched_block_begin(); while (overlay_paused()) usleep(2000); if (b) sched_block_end(); }   /* (vb_wait_until's overlay hold) */
+		vb_last_target = l; vblanks_add(1); RET(0); return;
+	}
+	vb_wait_until(vb_now() + 1, 1); RET(0);
+}
 static void h_wait_vblank_multi(Cpu *c) {
 	uint32_t n = A0 ? A0 : 1; if (n > 8) n = 8;
 	uint64_t now = vb_now(), base = vb_last_target && vb_last_target + n > now ? vb_last_target : now;
@@ -299,6 +316,7 @@ static void h_wait_vblank_multi(Cpu *c) {
  * SetFrameBuf, WaitSetFrameBuf, so Multi(1)'s edge (setbuf + 1) was always just reached and got
  * bumped to the one after -- 30 fps whatever n said. The fixed clock counts the n vblanks either way. */
 static void vb_wait_setbuf(uint64_t target, uint32_t count) {
+	setbuf_latched = 0;   /* (h_wait_vblank's latch: only the first display wait after SetFrameBuf) */
 	if (clock_fixed()) count = (uint32_t)setbuf_guest_count(count);
 	if (target > vb_now()) { vb_wait_until(target, count); return; }
 	reads_in_row = 0;
@@ -380,7 +398,13 @@ static void h_unregister_vblank_cb(Cpu *c) {
 }
 /* vb_wait_until's CB form: the pending callbacks before, at each edge and after; the sleep itself
  * runs a callback notified meanwhile (kernel_cb_sleep) */
+/* kernel_cb_sleep compares with the raw CLOCK_MONOTONIC (kernel.c mono_us); edge_us is in now_us's pause-adjusted time.
+ * Once the overlay had been opened (pause_off > 0) every raw time was past every edge and the CB vblank waits stopped
+ * sleeping for the rest of the run -- a game counting vblanks in a WaitVblankStartCB loop (Phantasy Star Nova's VSync
+ * thread) would have counted them as fast as it could loop (review, 2026-11-19). */
+static uint64_t edge_raw_us(uint64_t e) { uint64_t u = edge_us(e); return u ? u + __atomic_load_n(&pause_off, __ATOMIC_ACQUIRE) : 0; }
 static void vb_wait_until_cb(Cpu *c, uint64_t target, uint32_t count) {
+	setbuf_latched = 0;   /* (h_wait_vblank's latch: only the first display wait after SetFrameBuf) */
 	uint64_t now = vb_now(); if (target <= now) target = now + 1;
 	kernel_check_callbacks(c);
 	if (overlay_paused()) { int b = sched_block_begin(); while (overlay_paused()) usleep(2000); if (b) sched_block_end(); }   /* the overlay: see vb_wait_until's own comment */
@@ -389,14 +413,14 @@ static void vb_wait_until_cb(Cpu *c, uint64_t target, uint32_t count) {
 		 * the real sleep only paces the host (as many callback rounds every run, however late) */
 		for (uint32_t k = 0; k < count; k++) {
 			uint64_t e = now + 1 + (uint64_t)k * (target - now) / count;
-			kernel_cb_sleep(c, edge_us(e));
+			kernel_cb_sleep(c, edge_raw_us(e));
 			vblanks_add(1);
 			kernel_check_callbacks(c);
 		}
 		vb_last_target = target;
 		return;
 	}
-	for (uint64_t e = now + 1; e <= target; e++) { kernel_cb_sleep(c, edge_us(e)); kernel_check_callbacks(c); }
+	for (uint64_t e = now + 1; e <= target; e++) { kernel_cb_sleep(c, edge_raw_us(e)); kernel_check_callbacks(c); }
 	vb_last_target = target;
 	vblanks_add(count);
 }
@@ -409,6 +433,7 @@ static void h_wait_vblank_multi_cb(Cpu *c) {
 /* the CB forms of the SetFrameBuf waits: the same "already up: return" rule (vb_wait_setbuf), with the
  * pending callbacks delivered; under the fixed clock they keep their edge-by-edge callback rounds */
 static void vb_wait_setbuf_cb(Cpu *c, uint64_t target, uint32_t count) {
+	setbuf_latched = 0;
 	if (clock_fixed()) {   /* the guest's vblanks still to go, edge by edge with their callback rounds; none: the callbacks only */
 		count = (uint32_t)setbuf_guest_count(count);
 		if (count) vb_wait_until_cb(c, target, count); else { kernel_check_callbacks(c); vb_last_target = vb_now(); }
@@ -1037,6 +1062,7 @@ const HleEntry hle_display[] = {
 	 * and on a handheld those fail. Killzone 1.12 reads port 1 once at boot to tell the two apart: a success there made it a
 	 * PS TV, which has no touch screen, and it never created its touch recognizers (no menu answered a tap) */
 	{"sceCtrlReadBufferPositive2", h_ctrl_read2}, {"sceCtrlPeekBufferPositive2", h_ctrl_peek2},
+	{"sceCtrlPeekBufferPositiveExt2", h_ctrl_peek2}, /* Done by Codex: firmware dialog polling. */
 	{"sceAudioOutGetAdopt", h_audio_adopt},   /* (port type): 1, the type can be opened -- only voice chat or the system's music takes one */
 	{"sceDisplayGetRefreshRate", h_refresh_rate},
 	{"sceCtrlSetSamplingMode", h_ctrl_mode}, {"sceCtrlSetSamplingModeExt", h_ctrl_mode}, {"sceTouchSetSamplingState", h_touch_sampling},

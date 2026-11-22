@@ -20,7 +20,10 @@ typedef struct {   /* our layout of the game's 16-byte SceGxmTexture; u_mode/v_m
 	uint32_t data, format;
 	uint16_t width, height;
 	uint8_t min_filter, mag_filter, u_mode, v_mode;
+	uint32_t palette;   /* Done by Codex. Guest address of the P8 palette. */
 } GfxTexture;
+#define GFX_TEX_P8 0x95000000u
+#define GFX_TEX_P8_PALETTE_BYTES (256u * 4u)
 /* sRGB ("gamma") modes. A texture's SceGxmTextureGammaMode (control word 0 bits 27-28: R/BGR 1,
  * GR 3) rides in GfxTexture.format bits 16-17, which the format leaves unused; a colour surface's
  * SceGxmColorSurfaceGammaMode keeps its own place in GfxTarget.format, bits 12-13 (R/BGR 1, GR 3).

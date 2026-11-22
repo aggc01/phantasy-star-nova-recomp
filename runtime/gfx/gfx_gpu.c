@@ -595,6 +595,7 @@ static int predict_on(void) {   /* (Metal by default, where the shader library i
  * resolve: g_tShadowMap) is built with usse_spirv_set_pcf -- 16 taps on a 4x4 grid, one (soft) or two (softer)
  * shadow-map texels apart at 1x, whatever the render scale -- and averages its own compare over them. The Vita
  * takes one tap: at a PC resolution every sunlit leaf showed hard, texel-sized steps. */
+static int g_lines_draw;    /* gfx_gpu_draw: this draw is SCE_GXM_PRIMITIVE_LINES drawn natively (a LINELIST pipeline: 3D lines, the battle sparks) */
 static int g_points_draw;   /* gfx_gpu_draw: this draw is SCE_GXM_PRIMITIVE_POINTS sprites (get_shader picks the point-sprite variants) */
 static int g_motion_draw;   /* gfx_gpu_draw: get_shader wants a vertex program's motion variant (usse_spirv_set_motion; the motion pass, RECOMP_MV) */
 static int g_fzero_draw;    /* gfx_gpu_draw: this draw's fragment program's framebuffer blend goes to the blend unit -- its usse_fragment_fb_blend class (get_shader picks that variant) */
@@ -1026,7 +1027,7 @@ typedef struct { uint32_t addr, format, width, height; int layout; int stale, bc
 	 * watched (streak/calm count the frames towards and back out of that); full: the next check
 	 * re-hashes every page (and closes them again); nchk: re-checks in frame chk_frame */
 	uint32_t span, wclock, nph; uint64_t *ph; int hot, streak, calm, full, nchk; uint64_t big_frame, chk_frame;
-	uint64_t chash; int levels; uint64_t bytes;
+	uint64_t chash, palette_hash; int levels; uint64_t bytes;
 	uint8_t sx, sy; } TexEntry;   /* sx, sy: a view's texels a guest pixel (its source's scale: target_scale) */   /* chash/levels: the uploaded bytes' hash over the whole span and its mip count (get_texture: a texture that moved) */   /* samp[min][mag][addrmode_u][addrmode_v]; layout: GfxTexture's (3 = cube: a 6-layer cube texture) */
 /* The texture table: up to MAXTEX entries and tex_budget() bytes of GPU textures (an estimate per entry, TexEntry.bytes), the
  * least recently used one replaced past either. It was a fixed 512 entries: a Killzone area that samples more than that a
@@ -1279,9 +1280,21 @@ static void tring_end(SDL_GPUCommandBuffer *cmd, uint32_t lo, uint32_t hi) {   /
 }
 static void upload_texture(TexEntry *e, const GfxTexture *t) {
 	int cube = ((t->u_mode >> 4) & 3) == 3, levels = cube ? gfx_texture_cube_levels(t) : gfx_texture_levels(t), layers = cube ? 6 : 1;
+	const int had_levels = e->levels;   /* the mip count e->tex was made with (0: a new entry) */
 	e->chash = hash_bytes(G(t->data), e->span); e->levels = levels;   /* what the GPU texture holds (~10 us for 256 KB) */
+	e->palette_hash = t->palette ? hash_bytes(G(t->palette), GFX_TEX_P8_PALETTE_BYTES) : 0;
 	int wide = tex_wide(t->format); uint32_t bpp = wide ? 16 : 4;
 	batch_retire(e->tex, "texture re-upload");   /* its own command buffer runs before the pending draws that sampled the old content */
+	/* the same address, format and size with another mip count (the entry's key doesn't hold it): a new texture object. Uploaded
+	 * in place, levels past the old object's count went to subresources it doesn't have -- an access violation inside
+	 * SDL_UploadToGPUTexture (BC path) in Phantasy Star Nova's Filldia cutscenes, 20 minutes into play (2026-11-19,
+	 * docs/psnova/frame-rate.md); fewer levels left the old object's deeper mips to be sampled. A non-cube texture got here
+	 * through get_texture's "another extent" re-decode (its span counts the mips), a cube through the plain re-check (its
+	 * faces reserve the whole chain whatever the count, so the span stays the same) */
+	if (e->tex && had_levels && had_levels != levels) {
+		static int said; if (said++ < 20) fprintf(stderr, "    gpu: texture %#x fmt %#x %ux%u layout %d: %d mip levels, was %d -- a new texture object\n", t->data, t->format, t->width, t->height, e->layout, levels, had_levels);
+		SDL_ReleaseGPUTexture(gpu(), e->tex); e->tex = 0;
+	}
 	e->layout = (t->u_mode >> 4) & 3;
 	n_tex_uploads++;
 	SDL_GPUTextureFormat bc = tex_bc_format(t, cube);
@@ -1455,7 +1468,10 @@ static TexEntry *get_texture(const GfxTexture *t) {
 	{ int hint = tex_index[key] - 1; if (hint >= 0 && hint < ntextures && TEX_MATCH(&textures[hint])) e = &textures[hint]; }
 	if (!e) for (int i = 0; i < ntextures; i++) { TexEntry *x = &textures[i]; if (TEX_MATCH(x)) { e = x; tex_index[key] = (uint16_t)(i + 1); break; } }
 	#undef TEX_MATCH
-	if (e && e->ph && e->layout == layout && !e->full) {   /* the common case: nothing written over it since its last check */
+	/* Done by Codex. P8 palettes can change independently of the watched index pages. */
+	uint64_t palette_hash = t->palette ? hash_bytes(G(t->palette), GFX_TEX_P8_PALETTE_BYTES) : 0;
+	int palette_changed = e && e->palette_hash != palette_hash;
+	if (e && e->ph && e->layout == layout && !e->full && !palette_changed) {   /* the common case: nothing written over it since its last check */
 		int fresh = watch && !e->hot ? gwatch_unchanged(e->addr, e->span, &e->wclock) && (!tex_verify() || e->checked_frame == gpu_frame_no + 1)
 		                             : e->checked_frame == gpu_frame_no + 1;   /* hot, or no watch: once a frame */
 		/* a texture whose pages keep being written within a frame (a page it shares with data the game
@@ -1483,7 +1499,7 @@ static TexEntry *get_texture(const GfxTexture *t) {
 		/* unchanged: written with the same bytes, or only the other data sharing its first/last
 		 * page; `stale` likewise only forces this check -- a static render target viewed as a
 		 * texture every frame was re-decoded and re-uploaded every frame */
-		if (!changed) { e->stale = 0; return e; }
+		if (!changed && !palette_changed) { e->stale = 0; return e; }
 		if (trace_sync()) fprintf(stderr, "gpu trace: texture %#x fmt %#x %ux%u u%#x re-uploaded: %s (%u of %u pages)\n", t->data, t->format, t->width, t->height, t->u_mode, e->stale ? "a target came down over it and its bytes changed" : "its bytes changed", changed, e->nph);
 		e->stale = 0; n_tex_changed++;
 		uint64_t tu0 = us_now(); upload_texture(e, t); tex_account(e); t_texup += us_now() - tu0;
@@ -1496,8 +1512,8 @@ static TexEntry *get_texture(const GfxTexture *t) {
 		free(e->ph); e->ph = 0; e->stale = 0; n_tex_changed++;
 	}
 	TexEntry *moved = 0; uint64_t ch = 0;
-	if (!e) {
-		if (!t->width || !t->height) return 0;
+	if (!e && (!t->width || !t->height)) return 0;
+	if (!e && (t->format & 0xff000000u) != GFX_TEX_P8) {
 		/* a texture whose bytes moved: Killzone compacts its streaming pool with sceGxmTransferCopy every frame (a 2 MB
 		 * block 43,712 bytes down), so a dozen BC textures a frame came back at new addresses with the same bytes and were
 		 * decoded and uploaded again as new. An entry holding exactly these bytes -- format, size, layout, mip count, span
@@ -1553,11 +1569,14 @@ typedef struct {
 	int sampled;                  /* a GPU draw has read it as a texture (target_view): not a CPU readback buffer (see readback_enqueue) */
 	int self_read;                /* a draw of a scene on it sampled the region it was drawing (same_region_read): its scenes start with a download */
 	int cpu_reads;                /* the game read its guest memory on the CPU (the read watch, see readback_enqueue): read back after every scene */
+	uint32_t edge_lo[2], edge_len[2], edge_hash[2];   /* its partial first and last page's own bytes, and their hash at arming (edge_check) */
 	int armed; uint32_t arm_clock; uint64_t arm_gen;   /* its pages read-armed after a scene (readback_enqueue): the game-touch clock then and its gen --
 	                                                    * pages the game touched later, with no GPU write since, are the game's (target_download_to_guest keeps them) */
 	uint64_t drawn_frame, prev_drawn_frame;   /* the last two frames (gpu_frame_no) a scene drew into it: drawn every frame, or now and then (skip_lossless) */
 	int alias_in;                 /* this scene began with another target's bytes handed over (target_alias_sync): not its own last frame (skip_lossless) */
 	int cpu_dirty;   /* guest memory was written since the GPU texture was last uploaded (a CPU-fallback draw happened) */
+	uint8_t *present_pixels;   /* native pixels from this display target's last GPU download. Done by Codex. */
+	uint64_t present_pixels_gen;
 	int gpu_dirty;   /* the GPU texture has content guest memory doesn't (a GPU draw happened since the last download) */
 	uint64_t used;   /* last use, for eviction */
 	int kind;        /* target_kind: the GPU texture's format family */
@@ -1762,6 +1781,13 @@ static int trace_sync(void) {   /* RECOMP_GPU_TRACE_SYNC=1: every sync, flush an
  * the depth-only scratch target, aborted in SDL's pending-destroy list (pointer being freed was not
  * allocated) */
 static void target_release(TargetEntry *e) {
+	free(e->present_pixels); e->present_pixels = 0;
+	/* pending draws or view passes that read any of its textures go first (batch_retire, as view_entry does for a view):
+	 * an LRU eviction in get_target_at released a target whose colour a hoisted view pass (batch_add_view's src) still
+	 * named, and the batch's submit crashed in the driver -- twice in character creation once the swizzled views made
+	 * Phantasy Star Nova's targets view sources (2026-11-19, docs/psnova/frame-rate.md) */
+	SDL_GPUTexture *const mine[] = { e->color, e->fetch_copy, e->lo, e->snap, e->own_depth, e->mv };
+	for (int k = 0; k < (int)(sizeof mine / sizeof *mine); k++) batch_retire(mine[k], "target released");
 	if (e->color) SDL_ReleaseGPUTexture(gpu(), e->color);
 	if (e->fetch_copy) SDL_ReleaseGPUTexture(gpu(), e->fetch_copy);
 	if (e->lo) SDL_ReleaseGPUTexture(gpu(), e->lo);
@@ -1920,6 +1946,17 @@ static void target_upload_from_guest(TargetEntry *e) {
 }
 /* the GPU colour texture -> RGBA floats in a caller-owned buffer (not guest memory: RECOMP_GFX_CHECK
  * compares it against the software path without the two stepping on each other) */
+static int hud_scene(uint32_t addr);
+/* Done by Codex. A readback makes native guest pixels current while the GPU still owns the
+ * detailed image. Remember exactly the bytes transferred, so direct CPU writes can win at present. */
+static void remember_present_pixels(TargetEntry *e, const uint8_t *pixels, size_t bytes) {
+	if (!TSCALED(e) || !hud_scene(e->addr)) return;
+	if (!e->present_pixels) e->present_pixels = malloc(bytes);
+	if (e->present_pixels) {
+		memcpy(e->present_pixels, pixels, bytes);
+		e->present_pixels_gen = e->gen;
+	}
+}
 static void target_download_texels(TargetEntry *e, float *out, uint8_t *raw);
 static void target_download_floats(TargetEntry *e, float *out) { target_download_texels(e, out, 0); }
 static void target_download_texels(TargetEntry *e, float *out, uint8_t *raw) {   /* raw: the texture's bytes as they are (kind_bytes a texel) instead of floats */
@@ -1941,7 +1978,10 @@ static void target_download_texels(TargetEntry *e, float *out, uint8_t *raw) {  
 	SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
 	SDL_WaitForGPUFences(gpu(), true, &fence, 1); SDL_ReleaseGPUFence(gpu(), fence);
 	const uint8_t *map = SDL_MapGPUTransferBuffer(gpu(), xb, false);
-	if (raw) memcpy(raw, map, n); else texels_to_floats(e->kind, map, out, npx);
+	if (raw) {
+		if (raw == G(e->addr)) remember_present_pixels(e, map, n);
+		memcpy(raw, map, n);
+	} else texels_to_floats(e->kind, map, out, npx);
 	SDL_UnmapGPUTransferBuffer(gpu(), xb);
 	SDL_ReleaseGPUTransferBuffer(gpu(), xb);
 }
@@ -1976,8 +2016,42 @@ typedef struct { uint32_t addr, len; uint8_t *save; } KeptRange;
 static int keep_rewritten_on(void) { static int v = -1; if (v < 0) v = getenv("RECOMP_GPU_NO_KEEP_REWRITTEN") == 0; return v; }
 static uint32_t *game_touch_pages(uint32_t **hashes);   /* (the read watch's per-page record, below) */
 static uint32_t guest_page_hash(uint32_t page);
+/* A target's partial first and last page (it starts or ends inside a page) are not armed -- a neighbour may live in the
+ * rest of the page -- so a game store into the target's own bytes there was never seen, and a download wrote the old
+ * pixels over it. Phantasy Star Nova loads a costume texture where an old target's last page ended: its first ~3 KB came
+ * back as coloured blocks on the character's chest after a stale download (user's F12 capture frame_7093, texture
+ * 0x1fa70040; 2026-11-20). The edge bytes are hashed at arming; a download keeps them when the hash moved (the game wrote
+ * them since). */
+static uint32_t bytes_hash(uint32_t a, uint32_t n) { uint32_t h = 2166136261u; const uint8_t *p = G(a); for (uint32_t i = 0; i < n; i++) h = (h ^ p[i]) * 16777619u; return h | 1; }
+static void edge_arm(TargetEntry *e, uint32_t gbytes) {
+	const uint32_t ps = 1u << gwatch_page_shift(), a = e->addr, end = e->addr + gbytes;
+	uint32_t f_end = (a + ps - 1) & ~(ps - 1); if (f_end > end) f_end = end;
+	uint32_t l_lo = end & ~(ps - 1); if (l_lo < a) l_lo = a;
+	e->edge_lo[0] = a; e->edge_len[0] = (a & (ps - 1)) ? f_end - a : 0;
+	e->edge_lo[1] = l_lo; e->edge_len[1] = (end & (ps - 1)) && l_lo >= f_end ? end - l_lo : 0;
+	for (int k = 0; k < 2; k++) e->edge_hash[k] = e->edge_len[k] ? bytes_hash(e->edge_lo[k], e->edge_len[k]) : 0;
+}
+static int edge_changed(const TargetEntry *e, int k) { return e->edge_len[k] && bytes_hash(e->edge_lo[k], e->edge_len[k]) != e->edge_hash[k]; }
 static int kept_pages_find(TargetEntry *e, uint32_t gbytes, KeptRange **out) {
 	*out = 0;
+	if (keep_rewritten_on() && e->armed && e->arm_gen == e->gen && gbytes && (edge_changed(e, 0) || edge_changed(e, 1))) {
+		/* (the whole pages below, with the changed edges first and last: the ranges stay in address order) */
+		uint32_t *hash, *touch = game_touch_pages(&hash);
+		int sh = gwatch_page_shift(); const uint64_t ps = 1ull << sh;
+		const uint64_t a = ((uint64_t)e->addr + ps - 1) & ~(ps - 1), b = ((uint64_t)e->addr + gbytes) & ~(ps - 1);
+		KeptRange *r = malloc(sizeof *r * (size_t)(4 + (b > a ? (b - a) >> sh : 0))); int n = 0;
+		if (edge_changed(e, 0)) { r[n].addr = e->edge_lo[0]; r[n].len = e->edge_len[0]; r[n].save = 0; n++; }
+		if (touch) for (uint64_t p = a >> sh; p < (b >> sh); p++) {
+			if (__atomic_load_n(&touch[p], __ATOMIC_ACQUIRE) <= e->arm_clock) continue;
+			if (guest_page_hash((uint32_t)p) == __atomic_load_n(&hash[p], __ATOMIC_ACQUIRE)) continue;
+			uint32_t lo = (uint32_t)(p << sh), len = 1u << sh;
+			if (n && r[n - 1].addr + r[n - 1].len == lo) { r[n - 1].len += len; continue; }
+			r[n].addr = lo; r[n].len = len; r[n].save = 0; n++;
+		}
+		if (edge_changed(e, 1)) { if (n && r[n - 1].addr + r[n - 1].len == e->edge_lo[1]) r[n - 1].len += e->edge_len[1]; else { r[n].addr = e->edge_lo[1]; r[n].len = e->edge_len[1]; r[n].save = 0; n++; } }
+		static int said; if (said++ < 12) fprintf(stderr, "    gpu: target %#x %ux%u: the game rewrote its partial edge page(s) after its last scene; kept over a download %s\n", e->addr, e->width, e->height, sync_why);
+		*out = r; return n;
+	}
 	uint32_t *hash, *touch = game_touch_pages(&hash);
 	if (!keep_rewritten_on() || !touch || !e->armed || e->arm_gen != e->gen || !gbytes) return 0;
 	int sh = gwatch_page_shift(); const uint64_t ps = 1ull << sh;
@@ -1999,6 +2073,26 @@ static int kept_pages_find(TargetEntry *e, uint32_t gbytes, KeptRange **out) {
 		if (trace_sync()) fprintf(stderr, "gpu trace: download target %#x keeps %u pages (rewritten after its last scene)\n", e->addr, npages_kept);
 	}
 	*out = r; return n;
+}
+/* did the game rewrite any whole armed page of target e inside [lo, hi) after its last scene (kept_pages_find's test)?
+ * A texture over such pages holds the game's new bytes, not the target's: target_view sends it to the guest-memory path,
+ * where the download keeps them. Without this a view (or the exact bind) of the stale GPU pixels would serve it -- the
+ * noise the kept pages fixed, back for any target a view can read (the swizzled ones since 2026-11-18 late; review). */
+static int target_rewritten_under(TargetEntry *e, uint32_t lo, uint32_t hi) {
+	uint32_t *hash, *touch = game_touch_pages(&hash);
+	if (!keep_rewritten_on() || !e->armed || e->arm_gen != e->gen) return 0;
+	for (int k = 0; k < 2; k++) if (e->edge_len[k] && e->edge_lo[k] < hi && e->edge_lo[k] + e->edge_len[k] > lo && edge_changed(e, k)) return 1;   /* (edge_arm) */
+	if (!touch) return 0;
+	GfxTarget g = target_entry_as_gfx(e);
+	int sh = gwatch_page_shift(); const uint64_t ps = 1ull << sh;
+	uint64_t a = ((uint64_t)e->addr + ps - 1) & ~(ps - 1), b = ((uint64_t)e->addr + (uint64_t)gfx_target_bpp(&g) * e->width * e->height) & ~(ps - 1);
+	if (lo > a) a = lo & ~(ps - 1);
+	if ((uint64_t)hi < b) b = ((uint64_t)hi + ps - 1) & ~(ps - 1);
+	for (uint64_t p = a >> sh; p < (b >> sh); p++) {
+		if (__atomic_load_n(&touch[p], __ATOMIC_ACQUIRE) <= e->arm_clock) continue;
+		if (guest_page_hash((uint32_t)p) != __atomic_load_n(&hash[p], __ATOMIC_ACQUIRE)) return 1;
+	}
+	return 0;
 }
 static void kept_pages_save(KeptRange *r, int n) { for (int k = 0; k < n; k++) { r[k].save = malloc(r[k].len); memcpy(r[k].save, G(r[k].addr), r[k].len); } }
 static void kept_pages_restore(KeptRange *r, int n) {
@@ -2029,6 +2123,7 @@ static void target_download_to_guest(TargetEntry *e) {
 		}
 		free(kept);
 		e->gpu_dirty = 0;
+		if (e->armed) for (int k = 0; k < 2; k++) if (e->edge_len[k]) e->edge_hash[k] = bytes_hash(e->edge_lo[k], e->edge_len[k]);   /* (our own write is not the game's) */
 		textures_invalidate(e->addr, e->addr + gbytes);
 		t_tgt_download += us_now() - tdl0;
 		if (hitch_log() && us_now() - tdl0 > 1000) fprintf(stderr, "    gpu hitch: target %#x %ux%u downloaded to guest memory %s in %.2f ms\n", e->addr, e->width, e->height, sync_why, (us_now() - tdl0) / 1e3);
@@ -2051,6 +2146,7 @@ static void target_download_to_guest(TargetEntry *e) {
 	if (trace_sync() && npx > 10 * e->width + 10) fprintf(stderr, "gpu trace:   download (10,10) = %g %g %g -> guest word %#x\n", f[4 * (10 * e->width + 10)], f[4 * (10 * e->width + 10) + 1], f[4 * (10 * e->width + 10) + 2], RD32(e->addr + 4 * (10 * e->width + 10)));
 	free(f);
 	e->gpu_dirty = 0;
+	if (e->armed) for (int k = 0; k < 2; k++) if (e->edge_len[k]) e->edge_hash[k] = bytes_hash(e->edge_lo[k], e->edge_len[k]);
 	textures_invalidate(e->addr, e->addr + gbytes);
 	t_tgt_download += us_now() - tdl0;
 	if (hitch_log() && us_now() - tdl0 > 1000) fprintf(stderr, "    gpu hitch: target %#x %ux%u downloaded to guest memory %s in %.2f ms\n", e->addr, e->width, e->height, sync_why, (us_now() - tdl0) / 1e3);
@@ -2065,6 +2161,7 @@ typedef struct PipeEntry {
 	int depth_ok, stencil_ok;   /* the bound depth/stencil surface's own format: an S8-only surface
 	                             * must not depth-test, a depth-only one must not stencil-test */
 	uint8_t fp_disabled;       /* sceGxmSetFrontFragmentProgramEnable(..., DISABLED): no colour write */
+	uint8_t lines;             /* a LINELIST pipeline (g_lines_draw) */
 	int8_t dbf, dbu;           /* GfxDraw.depth_bias_factor / _units */
 	uint8_t dbs;               /* the render scale the slope factor was multiplied by (bias_scale; 0 without a slope factor) */
 	SDL_GPUGraphicsPipeline *pipe; int pending;   /* pending: a build worker is creating pipe (gpu_async) */
@@ -2120,7 +2217,7 @@ static uint32_t pipe_key_hash(const GfxDraw *d, const void *vs, const void *fs, 
 	PH(d->stencil_func | (uint32_t)d->stencil_fail << 8 | (uint32_t)d->depth_fail << 16 | (uint32_t)d->depth_pass << 24); PH(d->stencil_cmask | (uint32_t)d->stencil_wmask << 8);
 	{ const uint8_t *b = (const uint8_t *)&d->blend; for (size_t i = 0; i < sizeof d->blend; i++) PH(b[i]); }
 	PH((uint32_t)has_depth | (uint32_t)ckind << 4 | (uint32_t)depth_ok << 8 | (uint32_t)stencil_ok << 9 | (uint32_t)d->fp_disabled << 10);
-	PH((uint8_t)d->depth_bias_factor | (uint32_t)(uint8_t)d->depth_bias_units << 8 | (uint32_t)dbs << 16);
+	PH((uint8_t)d->depth_bias_factor | (uint32_t)(uint8_t)d->depth_bias_units << 8 | (uint32_t)dbs << 16 | (uint32_t)g_lines_draw << 24);
 #undef PH
 	return (uint32_t)(h ^ (h >> 32));
 }
@@ -2232,7 +2329,7 @@ static void pipe_create_info(const GfxDraw *d, const ShaderEntry *vs, const Shad
 	*null_fs_io = null_fs;
 	SDL_GPUGraphicsPipelineCreateInfo ci = {0};   /* (filled here, copied out at the end) */
 	ci.vertex_shader = vs->shader; ci.fragment_shader = null_fs ? null_fragment_shader() : fs->shader;
-	ci.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+	ci.primitive_type = g_lines_draw ? SDL_GPU_PRIMITIVETYPE_LINELIST : SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 	ci.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
 	/* SceGxmCullMode: gfx_soft.c's record_tri now culls (CULL_CW/CCW against the NDC winding,
 	 * independent of the viewport), checked by diffing its own output on Unit 13's frame 596
@@ -2245,7 +2342,13 @@ static void pipe_create_info(const GfxDraw *d, const ShaderEntry *vs, const Shad
 	 * isn't pinned down yet; left off (as before) rather than guessed at. */
 	ci.rasterizer_state.cull_mode = (SDL_GPUCullMode)cull_sdl;   /* resolved by the caller from SceGxmCullMode and the viewport's y flip (see gfx_gpu_draw) */
 	ci.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
-	ci.rasterizer_state.enable_depth_clip = false;   /* clamp, not clip: gfx_soft.c (the reference) never discards a fragment for its z being outside [0,w], only for failing the depth test */
+	/* clamp, not clip, by default: gfx_soft.c (the reference) never discards a fragment for its z being outside [0,w], only for
+	 * failing the depth test. RECOMP_GPU_DEPTH_CLIP=1: clip at z outside [0,w] as the console does (and Vita3K, with the API's
+	 * default). Phantasy Star Nova's cutscene ground (frame_74253 draw 1046: clip z a constant 31, w from -10 up) lies partly
+	 * in front of the near plane; clamped, it passed its GREATER_EQUAL test everywhere and painted the red ground over Fildia
+	 * and the sky, leaving only her hair and gauntlets (drawn after it). On in PCSG00351's RUN_ENV (2026-11-20). */
+	static int depth_clip = -1; if (depth_clip < 0) { const char *e = getenv("RECOMP_GPU_DEPTH_CLIP"); depth_clip = e && *e && atoi(e) != 0; }
+	ci.rasterizer_state.enable_depth_clip = depth_clip != 0;
 	if (d->depth_bias_factor || d->depth_bias_units) {   /* polygon offset (GfxDraw.depth_bias_*): units in the depth format's steps, factor on the slope */
 		ci.rasterizer_state.enable_depth_bias = true; ci.rasterizer_state.depth_bias_constant_factor = (float)d->depth_bias_units;
 		ci.rasterizer_state.depth_bias_slope_factor = (float)(d->depth_bias_factor * dbs); ci.rasterizer_state.depth_bias_clamp = 0;   /* (bias_scale) */
@@ -2273,7 +2376,7 @@ static PipeEntry *get_pipeline(const GfxDraw *d, const ShaderEntry *vs, const Sh
 		    && p->stencil_func == d->stencil_func && p->stencil_fail == d->stencil_fail && p->depth_fail == d->depth_fail && p->depth_pass == d->depth_pass
 		    && p->stencil_cmask == d->stencil_cmask && p->stencil_wmask == d->stencil_wmask   /* the reference is dynamic state, not part of the pipeline */
 		    && !memcmp(&p->blend, &d->blend, sizeof(GfxBlend)) && p->has_depth == has_depth && p->ckind == ckind
-		    && p->depth_ok == depth_ok && p->stencil_ok == stencil_ok && p->fp_disabled == d->fp_disabled && p->dbf == d->depth_bias_factor && p->dbu == d->depth_bias_units && p->dbs == dbs)
+		    && p->depth_ok == depth_ok && p->stencil_ok == stencil_ok && p->fp_disabled == d->fp_disabled && p->dbf == d->depth_bias_factor && p->dbu == d->depth_bias_units && p->dbs == dbs && p->lines == (uint8_t)g_lines_draw)
 			{
 				if (!low) {
 					p->used = ++pipe_clock;
@@ -2290,7 +2393,7 @@ static PipeEntry *get_pipeline(const GfxDraw *d, const ShaderEntry *vs, const Sh
 	p->vprog = vs->hash; p->fprog = fs->hash; p->blend = d->blend;   /* the programs by content: the patcher moves them between frames */ p->cull = d->cull; p->cull_sdl = cull_sdl; p->depth_func = d->depth_func; p->depth_write = d->depth_write;
 	p->stencil_func = d->stencil_func; p->stencil_fail = d->stencil_fail; p->depth_fail = d->depth_fail; p->depth_pass = d->depth_pass;
 	p->stencil_cmask = d->stencil_cmask; p->stencil_wmask = d->stencil_wmask; p->stencil_ref = d->stencil_ref; p->has_depth = has_depth; p->ckind = ckind;
-	p->depth_ok = depth_ok; p->stencil_ok = stencil_ok; p->fp_disabled = d->fp_disabled; p->dbf = d->depth_bias_factor; p->dbu = d->depth_bias_units; p->dbs = (uint8_t)dbs;
+	p->depth_ok = depth_ok; p->stencil_ok = stencil_ok; p->fp_disabled = d->fp_disabled; p->dbf = d->depth_bias_factor; p->dbu = d->depth_bias_units; p->dbs = (uint8_t)dbs; p->lines = (uint8_t)g_lines_draw;
 	p->smp_units = fs->smp_units; p->nsmp = fs->nsmp; p->fetch = fs->fetch == 1; p->vse = vs; p->fse = fs;
 
 	int null_fs = null_fs_rec; SDL_GPUGraphicsPipelineCreateInfo ci; SDL_GPUColorTargetDescription ctd;
@@ -2300,7 +2403,7 @@ static PipeEntry *get_pipeline(const GfxDraw *d, const ShaderEntry *vs, const Sh
 	BuildJob bj = { .is_pipe = 1, .low = low, .pj = { p, ci, ctd, d->vprog, d->fprog, us_now(), 0, (ShaderEntry *)vs, null_fs ? 0 : (ShaderEntry *)fs, null_fs, 0, vs->wkey && fs->wkey ? pipe_warm_key(vs->wkey, fs->wkey, v) : 0 } };
 	p->pending = 1;
 	if (!gpu_async() || !build_enqueue(&bj)) pipeline_build(&bj.pj);
-	if (!low) recipe_note_pipe(d, vs, fs, has_depth, ckind, depth_ok, stencil_ok, cull_sdl, null_fs);   /* (its own pipe_state: before pipe_create_info's debug overrides) */
+	if (!low && !g_lines_draw) recipe_note_pipe(d, vs, fs, has_depth, ckind, depth_ok, stencil_ok, cull_sdl, null_fs);   /* (its own pipe_state: before pipe_create_info's debug overrides) */
 	return p;
 }
 
@@ -2334,6 +2437,7 @@ static DepthEntry *depth_entry_for(const GfxTarget *t, int sx, int sy, int *fres
 		if (d->used < oldest->used) oldest = d;
 	}
 	DepthEntry *d = slot ? slot : oldest;
+	batch_retire(d->tex, "depth released"); batch_retire(d->pre_z, "depth released"); batch_retire(d->pre_s, "depth released");   /* (a pending depth view's source: target_release's comment) */
 	if (d->tex) SDL_ReleaseGPUTexture(gpu(), d->tex); if (d->pre_z) SDL_ReleaseGPUTexture(gpu(), d->pre_z); if (d->pre_s) SDL_ReleaseGPUTexture(gpu(), d->pre_s);
 	memset(d, 0, sizeof *d); d->key = key; d->w = t->stride; d->h = t->height; d->sx = (uint8_t)sx; d->sy = (uint8_t)sy; d->ds_stride = t->ds_stride ? t->ds_stride : t->stride; d->fmt = t->ds_format; d->type = t->ds_type; d->msx = mx; d->msy = my; d->used = ++depthg_clock; d->gen = d->zgen = ++write_clock;
 	SDL_GPUTextureCreateInfo dci = { .type = SDL_GPU_TEXTURETYPE_2D, .format = depth_format(), .usage = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,   /* SAMPLER: a depth buffer read back as an X8U24 texture is a view of this (target_view) */
@@ -3291,7 +3395,10 @@ static void readback_complete(Readback *r) {
 	float *f = raw ? 0 : malloc(16u * npx);
 	const uint8_t *map = SDL_MapGPUTransferBuffer(gpu(), r->xb, false);
 	if (map) {
-		if (raw) { gwatch_write_begin(r->t.data, gbytes); memcpy(G(r->t.data), map, gbytes); gwatch_write_end(r->t.data, gbytes); }
+		if (raw) {
+			if (r->e->addr == r->t.data && r->e->gen == r->gen) remember_present_pixels(r->e, map, gbytes);
+			gwatch_write_begin(r->t.data, gbytes); memcpy(G(r->t.data), map, gbytes); gwatch_write_end(r->t.data, gbytes);
+		}
 		else texels_to_floats(r->kind, map, f, npx);
 		SDL_UnmapGPUTransferBuffer(gpu(), r->xb);
 	}
@@ -3419,7 +3526,8 @@ static void readback_enqueue(TargetEntry *e) {
 	if (!e || !e->addr || !e->gpu_dirty) return;
 	if (!all && !e->cpu_reads && ((e->sampled && e->kind != TK_F32) || !maxpx || e->width * e->height > (uint32_t)maxpx)) {
 		if (watch) { GfxTarget g = target_entry_as_gfx(e); const uint32_t c0 = __atomic_load_n(&touch_clock, __ATOMIC_ACQUIRE);   /* (before arming: a fault in between counts as after) */
-			gwatch_read_arm(e->addr, (uint32_t)gfx_target_bpp(&g) * e->width * e->height); e->armed = 1; e->arm_clock = c0; e->arm_gen = e->gen; }
+			gwatch_read_arm(e->addr, (uint32_t)gfx_target_bpp(&g) * e->width * e->height); e->armed = 1; e->arm_clock = c0; e->arm_gen = e->gen;
+			edge_arm(e, (uint32_t)gfx_target_bpp(&g) * e->width * e->height); }
 		return;
 	}   /* RECOMP_GPU_READBACK_ALL=1 (diagnosis): every scene's target, so guest memory holds what the console's would -- does the game read a target on the CPU the rule above misses? */
 	readbacks_complete(e->addr, e->addr + 1);   /* an older copy of this one first */
@@ -3880,7 +3988,23 @@ static int view_mode(uint32_t tgt_fmt, const GfxTexture *tex, uint32_t *tex_bpp,
 	case 0x21000000u: return xb == 0x1a000000u ? 1 : -1;                                        /* F11F11F10 as F11F11F10 */
 	case 0x41000000u: return xb == 0x9a000000u ? 2 : -1;                                        /* U2F10F10F10 as U2F10F10F10 */
 	case 0x11000000u: return xb == 0x0c000000u ? 3 : xb == 0x0d000000u ? 4 : -1;                /* F32F32 as U8U8U8U8 / S8S8S8S8 bytes */
-	case 0x00000000u: return (tgt_fmt & 0x00300000u) == 0 && xb == 0x0c000000u ? 0 : -1;      /* U8U8U8U8 as U8U8U8U8 (a sub-rectangle; the exact case binds the target itself) */
+	case 0x00000000u: {   /* U8U8U8U8 as U8U8U8U8 (a sub-rectangle; the exact case binds the target itself) */
+		if (xb != 0x0c000000u) return -1;
+		/* a colour swizzle (bits 0x00300000: ABGR, ARGB, RGBA, BGRA): the GPU texture holds the shader's own r, g, b, a and
+		 * only the download to guest memory orders the bytes (gfx_soft.c target_write_raw_of: guest byte i = component
+		 * enc[i]). The texture's selectors above name guest bytes, so each goes through enc to the component it holds.
+		 * Phantasy Star Nova's bloom chain writes ARGB targets (0x00100000) and reads them as ARGB textures (0x0c009000):
+		 * the two cancel, and without this every one of its 5 reads a frame was a download, a CPU decode and a re-upload,
+		 * 11-13 ms a frame (docs/psnova/frame-rate.md). RECOMP_GPU_NO_SWIZZLED_VIEWS=1: the guest-memory path, as before. */
+		const uint32_t cs = (tgt_fmt >> 20) & 3;
+		if (cs) {
+			static int off = -1; if (off < 0) off = getenv("RECOMP_GPU_NO_SWIZZLED_VIEWS") != 0;
+			if (off) return -1;
+			static const uint8_t enc[4][4] = { {0,1,2,3}, {2,1,0,3}, {3,2,1,0}, {3,0,1,2} };
+			for (int k = 0; k < 4; k++) if (swz[k] < 4) swz[k] = enc[cs][swz[k]];
+		}
+		return 0;
+	}
 	}
 	return -1;
 }
@@ -3902,14 +4026,14 @@ static int view_mapping(uint32_t tgt_addr, uint32_t tgt_stride, uint32_t tgt_w, 
 }
 static TexEntry *view_entry(const GfxTexture *tex, SDL_GPUTextureFormat vfmt, int sx, int sy) {   /* sx, sy: its source's scale */   /* the view's own texture object (vfmt: RGBA32F unless RECOMP_GPU_VIEW_FAST narrowed it; the texture's size), LRU */
 	int layout = (tex->u_mode >> 4) & 3;
-	for (int i = 0; i < nviews; i++) { TexEntry *v = &views[i]; if (v->addr == tex->data && v->format == tex->format && v->width == tex->width && v->height == tex->height && v->layout == layout && v->sx == sx && v->sy == sy && v->levels <= 1) {
+	/* the view's format is part of its key: the same texture decoding to another format (a depth <-> colour swap over the same
+	 * memory, or narrow <-> RGBA32F as filtering turns on/off) gets an entry of its own. It once recreated this entry in place,
+	 * and a draw sampling one texture through two units, one filtered (RGBA32F) and one point-sampled (narrow), freed the
+	 * texture its first unit had just bound: that draw isn't in the batch yet, so batch_retire's flush couldn't save it, and it
+	 * reached the GPU naming a released texture -- VK_ERROR_DEVICE_LOST within seconds of every windowed start of Phantasy
+	 * Star Nova once its swizzled bloom targets became views (2026-11-19, docs/psnova/frame-rate.md) */
+	for (int i = 0; i < nviews; i++) { TexEntry *v = &views[i]; if (v->addr == tex->data && v->format == tex->format && v->width == tex->width && v->height == tex->height && v->layout == layout && v->sx == sx && v->sy == sy && v->levels <= 1 && v->vfmt == vfmt) {
 		v->used = ++tex_clock;
-		if (v->tex && v->vfmt != vfmt) {   /* the same texture now decodes to another format (a depth <-> colour swap over the same memory, or narrow <-> RGBA32F as filtering turns on/off): recreate it */
-			batch_retire(v->tex, "view format changed"); SDL_ReleaseGPUTexture(gpu(), v->tex); v->tex = 0; v->view_src = 0;
-			SDL_GPUTextureCreateInfo tci = { .type = SDL_GPU_TEXTURETYPE_2D, .format = vfmt, .usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
-				.width = TSX(v, tex->width), .height = TSY(v, tex->height), .layer_count_or_depth = 1, .num_levels = 1, .sample_count = SDL_GPU_SAMPLECOUNT_1 };
-			v->tex = SDL_CreateGPUTexture(gpu(), &tci); v->vfmt = vfmt;
-		}
 		return v; } }
 	TexEntry *v;
 	if (nviews < MAXVIEW) v = &views[nviews++];
@@ -4042,6 +4166,10 @@ static TexEntry *target_view(const GfxTexture *tex, TargetEntry **exact) {
 	}
 	const int snap2 = snap && scene_snap == 2 && best == scene_entry && best->snap && !dbest;   /* the starting pixels in the GPU snapshot */
 	if (snap && !snap2) { if (scene_snap == 2) snap_to_guest(scene_entry); goto guest; }
+	if (best && !snap && (!dbest || best->gen > dbest->gen) && target_rewritten_under(best, tex->data, xhi)) {   /* the game's own bytes over a dead target: guest memory, kept pages */
+		if (trace_sync()) fprintf(stderr, "gpu trace: texture %#x over target %#x: pages the game rewrote after its last scene -- guest memory, not a view\n", tex->data, best->addr);
+		goto guest;
+	}
 	if (best && !dbest && gfx_texture_levels(tex) > 1 && !no_views()) { TexEntry *mv = mip_view(tex, best, snap2 ? best->snap : 0, snap2 ? best->snap_gen : 0); if (mv) return mv; }   /* every level a GPU target (the transfer chain's) */
 	if (ex && !snap2 && (!dbest || best->gen > dbest->gen) && !getenv("RECOMP_GPU_DEBUG_NO_RTT")) {
 		if (best == scene_entry) batch_flush("scene target sampled");   /* sampled while it is the attachment (undefined either way): at least after the draws before it */
@@ -4072,6 +4200,11 @@ static TexEntry *target_view(const GfxTexture *tex, TargetEntry **exact) {
 			 * the view as it treats the target bound directly (bind_unit's sRGB masks). The other reinterpretations read raw bytes:
 			 * guest memory. Killzone's streak strip (the bottom 384x64 of an sRGB 384x192 target) went down twice a frame. */
 			if (best->kind == TK_U8S && mode != 0) mode = -1;
+			if (best->kind == TK_U8S && mode == 0 && ((best->format >> 20) & 3)) {   /* a swizzled sRGB target: alpha must stay alpha and colour colour, or the
+				                                                                    * view's decoded colour lands in alpha (and raw alpha in a colour) where the
+				                                                                    * guest path decodes bytes by their slot (review, 2026-11-18 late) */
+				for (int k = 0; k < 4; k++) if (u.swz[k] < 4 && ((k == 3) != (u.swz[k] == 3))) mode = -1;
+			}
 			if (mode >= 0 && view_mapping(best->addr, best->width, best->width, best->height, best->type, (uint32_t)gfx_target_bpp(&tg), tex, tex_bpp, best->sx, best->sy, &u)) {   /* a TargetEntry's width is the surface stride */
 				u.mode = (uint32_t)mode;
 				int vfilt = tex->min_filter || tex->mag_filter;
@@ -4807,7 +4940,8 @@ static uint32_t attr_bytes(uint8_t fmt) { switch (fmt) { case 9: case 10: return
 static void vf_plan(const GfxDraw *d, const UsseVertexLayout *vl, int npa, VfPlan *p) {
 	memset(p, 0, sizeof *p);
 	uint32_t n = d->count; p->ntri = gfx_prim_tris(d->prim, n); p->nidx = 3 * p->ntri;
-	if (g_points_draw) { p->ntri = 2 * n; p->nidx = 6 * n; }   /* (a point is two triangles: the CPU packer, each point's record six times) */
+	if (g_points_draw) { p->ntri = 2 * n; p->nidx = 6 * n; }
+	if (g_lines_draw) { p->ntri = n / 2; p->nidx = 2 * (n / 2); }   /* (lines: ntri counts lines, two indices each, the game's own list) */   /* (a point is two triangles: the CPU packer, each point's record six times) */
 	uint32_t lo = ~0u, hi = 0; const uint8_t *ib = G(d->indices);   /* the index range, both paths need it */
 	if (d->index_format) for (uint32_t i = 0; i < n; i++) { uint32_t ix; memcpy(&ix, ib + 4 * i, 4); if (ix < lo) lo = ix; if (ix > hi) hi = ix; }
 	else for (uint32_t i = 0; i < n; i++) { uint16_t ix; memcpy(&ix, ib + 2 * i, 2); if (ix < lo) lo = ix; if (ix > hi) hi = ix; }
@@ -5697,6 +5831,58 @@ void gfx_gpu_build_status(double *wait_ms, double *total_ms, int *inflight) {
 	*total_ms = __atomic_load_n(&build_wait_total, __ATOMIC_RELAXED) / 1e6 + *wait_ms;
 	pthread_mutex_lock(&bq_m); *inflight = bq_inflight - bq_low; pthread_mutex_unlock(&bq_m);   /* (the recipes' prebuilds aren't the game waiting) */
 }
+/* SCE_GXM_PRIMITIVE_LINES on the GPU, for the common 2D case: lines whose position attribute is already in the target's
+ * pixels (F32, z = 0, w = 1, inside the target) -- each line becomes a quad one line width wide (half a width longer at
+ * each end) in those same units, written as a triangle list into a guest scratch buffer and drawn as an ordinary draw.
+ * Phantasy Star Nova outlines its 512x512 shadow image this way every frame; the software path's round trip of that
+ * target (4 MB down and up at 4x) halved the frame rate (60 -> 30 fps, render 2.7 -> 16 ms, test102/103, 2026-11-20).
+ * Anything else (3D lines, several streams) still goes to the software path. Returns 1 when drawn. */
+extern uint32_t guest_alloc(uint32_t size, uint32_t align) __attribute__((weak));
+static int lines_as_quads(const GfxDraw *d) {
+	static uint32_t scratch, scratch_bytes;
+	if (d->nstream != 1 || !d->stride[0] || d->count < 2 || d->count > 512) return 0;
+	int pa = -1; for (int k = 0; k < d->nattr; k++) if (d->attr[k].reg == 0) pa = k;
+	if (pa < 0 || d->attr[pa].stream != 0 || d->attr[pa].format != 9 || d->attr[pa].comps < 2) return 0;
+	const uint32_t stride = d->stride[0], off = d->attr[pa].offset, comps = d->attr[pa].comps, nl = d->count / 2;
+	const float W = (float)(scene_target.width ? scene_target.width : 4096), H = (float)(scene_target.height ? scene_target.height : 4096);
+	const float half = 0.5f * (float)(d->point_line_width ? d->point_line_width : 1);
+	const uint32_t vbytes = 4 * nl * stride, need = vbytes + 6 * nl * 2 + 64;
+	if (need > scratch_bytes) {
+		if (!guest_alloc) return 0;
+		uint32_t sz = need < 65536 ? 65536 : need;
+		uint32_t a = guest_alloc(sz, 64); if (!a) return 0;
+		scratch = a; scratch_bytes = sz;
+	}
+	uint8_t *vb = G(scratch); uint16_t ib[6 * 256]; uint32_t nv = 0, ni = 0;
+	for (uint32_t l = 0; l < nl; l++) {
+		uint32_t ia = index_at(d, 2 * l), ibx = index_at(d, 2 * l + 1);
+		const uint8_t *ra = G(d->stream[0] + ia * stride), *rb = G(d->stream[0] + ibx * stride);
+		float pa4[4] = {0, 0, 0, 1}, pb4[4] = {0, 0, 0, 1};
+		memcpy(pa4, ra + off, 4 * (comps < 4 ? comps : 4)); memcpy(pb4, rb + off, 4 * (comps < 4 ? comps : 4));
+		if ((comps > 2 && (pa4[2] != 0 || pb4[2] != 0)) || (comps > 3 && (pa4[3] != 1 || pb4[3] != 1))) return 0;
+		if (pa4[0] < -1 || pa4[0] > W + 1 || pa4[1] < -1 || pa4[1] > H + 1 || pb4[0] < -1 || pb4[0] > W + 1 || pb4[1] < -1 || pb4[1] > H + 1) return 0;
+		float dx = pb4[0] - pa4[0], dy = pb4[1] - pa4[1], len = sqrtf(dx * dx + dy * dy);
+		if (!(len > 0)) { dx = 1; dy = 0; } else { dx /= len; dy /= len; }
+		const float px = -dy * half, py = dx * half, ex = dx * half, ey = dy * half;
+		for (int c = 0; c < 4; c++) {   /* 0 a-left, 1 a-right, 2 b-left, 3 b-right */
+			const uint8_t *src = c < 2 ? ra : rb; const float *p = c < 2 ? pa4 : pb4;
+			const float side = (c & 1) ? 1.0f : -1.0f, end = c < 2 ? -1.0f : 1.0f;
+			uint8_t *dst = vb + (nv + c) * stride; memcpy(dst, src, stride);
+			float q[2] = { p[0] + side * px + end * ex, p[1] + side * py + end * ey };
+			memcpy(dst + off, q, 8);
+		}
+		const uint16_t b = (uint16_t)nv;
+		ib[ni++] = b; ib[ni++] = (uint16_t)(b + 1); ib[ni++] = (uint16_t)(b + 2);
+		ib[ni++] = (uint16_t)(b + 1); ib[ni++] = (uint16_t)(b + 3); ib[ni++] = (uint16_t)(b + 2);
+		nv += 4;
+	}
+	memcpy(G(scratch + vbytes), ib, 2 * ni);
+	GfxDraw q = *d;
+	q.prim = 0; q.index_format = 0; q.indices = scratch + vbytes; q.count = ni; q.stream[0] = scratch; q.cull = 0;
+	{ static int said; if (!said++) fprintf(stderr, "    gpu: lines drawn as quads on the GPU (%u lines, first draw)\n", nl); }
+	gfx_gpu_draw(&q);
+	return 1;
+}
 void gfx_gpu_draw(const GfxDraw *d) {
 	if (!gpu() || !scene_entry) { if (!gpu() || scene_soft) gfx_soft_draw(d); return; }   /* (no target and no software scene: nothing begun to draw into -- dropped) */
 	disp_note(DISP_DRAWS);
@@ -5706,12 +5892,25 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	/* SCE_GXM_PRIMITIVE_POINTS: point sprites, expanded to quads on the CPU by gfx_soft.c's
 	 * render_points_interp (the pipelines here are triangle lists; a few dozen sprites per prompt).
 	 * Uncharted's swipe prompts draw this way into a widget-sized target (see gfx_soft.c) */
-	g_points_draw = 0;
+	g_points_draw = 0; g_lines_draw = 0;
 	if (gfx_prim_kind(d->prim) == GFX_PRIM_POINTS) {   /* RECOMP_GPU_NO_POINTS=1 drops them instead: the A/B of what the fallback costs (the target comes down and goes back up around each point draw) */
 		static int no_points = -1, soft_points = -1; if (no_points < 0) { no_points = getenv("RECOMP_GPU_NO_POINTS") != 0; soft_points = getenv("RECOMP_GPU_SOFT_POINTS") != 0; }
 		if (no_points) return;
 		if (soft_points) { soft_fallback(d, "point sprites"); return; }   /* RECOMP_GPU_SOFT_POINTS=1: the software path's sprites, as before */
 		g_points_draw = 1;   /* on the GPU: six vertices a point, the corner offsets in the vertex shader (usse_spirv_set_points) */
+	}
+	/* SCE_GXM_PRIMITIVE_LINES: drawn by the software path (gfx_soft.c render_lines_interp: one-pixel quads); a corner of a
+	 * line quad needs the other end's position, which one vertex-shader invocation doesn't have. Rare (Phantasy Star Nova:
+	 * one 4-line draw a frame, the border of its character-shadow image, whose absence drew long dark bands across the
+	 * ground). RECOMP_NO_LINES=1 drops them, as before 2026-11-20. */
+	if (gfx_prim_kind(d->prim) == GFX_PRIM_LINES) {
+		static int no_lines = -1; if (no_lines < 0) no_lines = getenv("RECOMP_NO_LINES") != 0;
+		if (no_lines || lines_as_quads(d)) return;
+		static int soft_lines = -1; if (soft_lines < 0) soft_lines = getenv("RECOMP_GPU_SOFT_LINES") != 0;
+		if (soft_lines) { soft_fallback(d, "lines"); return; }   /* RECOMP_GPU_SOFT_LINES=1: the software path's lines, as before */
+		if (d->count < 2) return;
+		g_lines_draw = 1;   /* natively: a LINELIST pipeline, one pixel wide at the render scale (SDL_GPU has no line width) */
+		{ static int said; if (!said++) fprintf(stderr, "    gpu: 3D lines drawn natively on the GPU (LINELIST)\n"); }
 	}
 	uint64_t td0 = us_now(), tf0 = t_flush;
 	const UsseProgram *vp = usse_get(d->vprog), *fp = usse_get(d->fprog);
@@ -5816,7 +6015,7 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	 * convention culls the full-screen ambient pass entirely. RECOMP_GPU_CULL_SWAP=1: that other
 	 * convention, for diagnosis. */
 	static int swap = -1; if (swap < 0) swap = getenv("RECOMP_GPU_CULL_SWAP") != 0;
-	int cull_sdl = g_points_draw ? SDL_GPU_CULLMODE_NONE : d->cull == 1 ? (swap ? SDL_GPU_CULLMODE_FRONT : SDL_GPU_CULLMODE_BACK)
+	int cull_sdl = g_points_draw || g_lines_draw ? SDL_GPU_CULLMODE_NONE : d->cull == 1 ? (swap ? SDL_GPU_CULLMODE_FRONT : SDL_GPU_CULLMODE_BACK)
 	             : d->cull == 2 ? (swap ? SDL_GPU_CULLMODE_BACK : SDL_GPU_CULLMODE_FRONT) : SDL_GPU_CULLMODE_NONE;
 	uint64_t tp0 = us_now();
 	PipeEntry *pipe = get_pipeline(d, vs, fs, scene_target.depth != 0, scene_entry->kind, ds_depth_ok, ds_stencil_ok, cull_sdl, -1, 0);
@@ -5881,7 +6080,7 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	}
 	uint32_t lo = plan.lo, hi = plan.hi, nuniq = hi - lo + 1, nidx = plan.nidx, nrec = 0;
 	int kind = gfx_prim_kind(d->prim), indexed, isize = 4;   /* isize: the index ring's element size for this draw */
-	if (plan.gpu) { indexed = 1; need_words = plan.words; if (!d->index_format && (kind == GFX_PRIM_TRIANGLES || kind == GFX_PRIM_EDGES)) isize = 2; }
+	if (plan.gpu) { indexed = 1; need_words = plan.words; if (!d->index_format && (kind == GFX_PRIM_TRIANGLES || kind == GFX_PRIM_EDGES || g_lines_draw)) isize = 2; }
 	else { indexed = !g_points_draw && nuniq <= nidx && nidx <= IRING_WORDS && !no_indexed(); nrec = indexed ? nuniq : nidx; need_words = nrec * npa; }
 	if (need_words > VRING_WORDS) { free(check_pre); soft_fallback(d, "draw larger than the vertex ring"); return; }
 	if (indexed && !iring) {
@@ -5910,7 +6109,7 @@ void gfx_gpu_draw(const GfxDraw *d) {
 		uint32_t w = vring_pos;
 		for (int m = 0; m < plan.nst; m++) { memcpy(vmap + (w - vring_pos), G(plan.st[m].src), plan.st[m].bytes); vf_stream_w[plan.st[m].s] = w; w += (plan.st[m].bytes + 3) / 4 + 1; }
 		uint32_t *imap = (uint32_t *)SDL_MapGPUTransferBuffer(gpu(), iring_xfer, false) + iring_pos;
-		if (kind == GFX_PRIM_TRIANGLES || kind == GFX_PRIM_EDGES) memcpy(imap, G(d->indices), (size_t)isize * nidx);
+		if (kind == GFX_PRIM_TRIANGLES || kind == GFX_PRIM_EDGES || g_lines_draw) memcpy(imap, G(d->indices), (size_t)isize * nidx);
 		else { uint32_t *ip = imap; for (uint32_t t = 0; t < ntri; t++) { gfx_prim_tri(d->prim, t, pos); for (int k = 0; k < 3; k++) *ip++ = index_at(d, pos[k]); } }
 		SDL_UnmapGPUTransferBuffer(gpu(), iring_xfer);
 		iring_off = iring_pos * 4; iring_pos += iwords;
@@ -5919,11 +6118,14 @@ void gfx_gpu_draw(const GfxDraw *d) {
 		if (indexed) {
 			for (uint32_t v = lo; v <= hi; v++, vp_out += npa) gfx_vertex_pack(&pk, v, vp_out);
 			uint32_t *imap = (uint32_t *)SDL_MapGPUTransferBuffer(gpu(), iring_xfer, false) + iring_pos, *ip = imap;
-			for (uint32_t t = 0; t < ntri; t++) { gfx_prim_tri(d->prim, t, pos); for (int k = 0; k < 3; k++) *ip++ = index_at(d, pos[k]) - lo; }
+			if (g_lines_draw) for (uint32_t i = 0; i < nidx; i++) *ip++ = index_at(d, i) - lo;
+			else for (uint32_t t = 0; t < ntri; t++) { gfx_prim_tri(d->prim, t, pos); for (int k = 0; k < 3; k++) *ip++ = index_at(d, pos[k]) - lo; }
 			SDL_UnmapGPUTransferBuffer(gpu(), iring_xfer);
 			iring_off = iring_pos * 4; iring_pos += iwords;
 		} else if (g_points_draw) {   /* each point's record six times: the vertex shader takes its corner from gl_VertexIndex % 6 */
 			for (uint32_t i = 0; i < d->count; i++) { gfx_vertex_pack(&pk, index_at(d, i), vp_out); for (int k = 1; k < 6; k++) memcpy(vp_out + (size_t)k * npa, vp_out, 4u * npa); vp_out += 6 * npa; }
+		} else if (g_lines_draw) {
+			for (uint32_t i = 0; i < nidx; i++, vp_out += npa) gfx_vertex_pack(&pk, index_at(d, i), vp_out);
 		} else {
 			for (uint32_t t = 0; t < ntri; t++) { gfx_prim_tri(d->prim, t, pos); for (int k = 0; k < 3; k++, vp_out += npa) gfx_vertex_pack(&pk, index_at(d, pos[k]), vp_out); }
 		}
@@ -5947,7 +6149,7 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	 * motion would cover the scene's) */
 	const int lit_after = (const void *)scene_entry == mv_lit && mv_lit != mv_main_entry && mv_lit_index >= 1 && mv_main_entry && d->count > 6
 	                      && (d->depth_func == 1 || d->depth_func == 3 || d->depth_func == 4 || d->depth_func == 6);   /* (GXM LESS, LESS_EQUAL, GREATER, GREATER_EQUAL) */
-	const int mv_want = mv_scene && (pipe->depth_write || lit_after) && pipe->has_depth && pipe->depth_ok && !fs->fzero && !g_points_draw && !(d->blend.present && (d->blend.color_func || d->blend.alpha_func));
+	const int mv_want = mv_scene && (pipe->depth_write || lit_after) && pipe->has_depth && pipe->depth_ok && !fs->fzero && !g_points_draw && !g_lines_draw && !(d->blend.present && (d->blend.color_func || d->blend.alpha_func));
 	const uint32_t *mv_psa = 0; uint32_t mv_pwin[8][4]; int mv_npwin = 0; const uint8_t *mv_psrc[8];
 	if (mv_want) {
 		uint32_t csa[256]; for (int i = 0; i < 256; i++) csa[i] = vdraw.sa[i].u;
@@ -6527,7 +6729,11 @@ void gfx_gpu_present(uint32_t base, uint32_t width, uint32_t height, uint32_t pi
 		 * plain forms of a format: Vulkan does. Through guest memory instead, Killzone's windowed frames each cost a download
 		 * and a wait for the whole frame, and the window showed the 1x frame at any render scale (2026-10-26) */
 		static int srgb_copy = -1; if (srgb_copy < 0) { const char *dv = SDL_GetGPUDeviceDriver(gpu()); srgb_copy = dv && !strcmp(dv, "vulkan"); }
-		const int via_gpu = e->gpu_dirty && !gfx_soft_shot_due() && format == 0 && window_active() && !no_gpu_present && (e->kind != TK_U8S || srgb_copy);
+		int via_gpu = 0;
+		if (!e->cpu_dirty && !gfx_soft_shot_due() && format == 0 && window_active() && !no_gpu_present && (e->kind != TK_U8S || srgb_copy)) {
+			via_gpu = e->gpu_dirty || (e->present_pixels && e->present_pixels_gen == e->gen &&
+				!memcmp(G(e->addr), e->present_pixels, (size_t)e->width * e->height * 4));
+		}
 		hist_record(base, e, TSX(e, width), TSY(e, height), via_gpu);
 		{ const int m = __atomic_exchange_n(&hist_save_mark, 0, __ATOMIC_ACQ_REL); if (m) hist_save(m); }
 		{ static long at = -2; if (at == -2) { const char *v = getenv("RECOMP_FRAME_HISTORY_SAVE_AT"); at = v ? atol(v) : -1; }   /* RECOMP_FRAME_HISTORY_SAVE_AT=frame: F5's save without a window (tests) */

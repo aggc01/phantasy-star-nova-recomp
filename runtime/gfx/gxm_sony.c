@@ -47,6 +47,7 @@ static uint32_t bound(uint32_t v, uint32_t sentinel_mask) { return (v & 0xff0000
 
 /* bytes per texel of the uncompressed texture base formats (0: block-compressed or unknown) */
 static uint32_t tex_bpp(uint32_t format) {
+	if ((format & 0xff000000u) == GFX_TEX_P8) return 1;
 	switch (format & 0x1f000000u) {
 	case 0x1b000000u: case 0x19000000u: return 8;
 	case 0x0c000000u: case 0x0d000000u: case 0x0e000000u: case 0x0f000000u: case 0x10000000u: case 0x11000000u: case 0x12000000u:
@@ -70,12 +71,18 @@ static uint32_t tex_bpp(uint32_t format) {
 static int srgb_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMP_SRGB"); v = e && *e == '1'; } return v; }
 /* ---- SceGxmTexture (4 control words) -> the renderer's GfxTexture */
 static GfxTexture texture_words(uint32_t w0, uint32_t w1, uint32_t w2, uint32_t w3);
+static int mapped(uint32_t a, uint32_t size);
 static GfxTexture texture(uint32_t t) { return texture_words(RD32(t), RD32(t + 4), RD32(t + 8), RD32(t + 12)); }
 static GfxTexture texture_words(uint32_t w0, uint32_t w1, uint32_t w2, uint32_t w3) {
 	uint32_t type = w1 & 0xe0000000u;
 	GfxTexture g = {0};
 	g.data = w2 & ~3u;
 	g.format = (w0 & 0x80000000u) | (w1 & 0x1f000000u) | ((w3 >> 16) & 0x7000u) | (srgb_on() ? ((w0 >> 27) & 3u) << 16 : 0);   /* + the gamma mode (gfx.h GFX_TEX_GAMMA), opt-in */
+	/* Done by Codex. Texture word 3 stores the palette in 64-byte units. */
+	if ((g.format & 0xff000000u) == GFX_TEX_P8) {
+		uint32_t palette = w3 << 6;
+		if (palette && mapped(palette, GFX_TEX_P8_PALETTE_BYTES)) g.palette = palette;
+	}
 	int log2size = type == 0 || type == 0x40000000u;   /* swizzled and cube store log2 sizes */
 	g.width = (uint16_t)(log2size ? 1u << ((w1 >> 16) & 15) : ((w1 >> 12) & 0xfff) + 1);
 	g.height = (uint16_t)(log2size ? 1u << (w1 & 15) : (w1 & 0xfff) + 1);
@@ -124,7 +131,6 @@ static uint32_t default_ubuf(uint32_t cx, uint32_t state, uint32_t reserved, uin
 /* ---- the GXP tables a precomputed state's uniform buffers are recovered through (self-relative) */
 static int checking(void);
 static void issue(const char *fmt, ...);
-static int mapped(uint32_t a, uint32_t size);
 static uint32_t gxp_table(uint32_t gxp, uint32_t off) { return gxp + off + RD32(gxp + off); }
 /* uniform buffer b of a precomputed state: from its DMA table (entry k for the GXP's +0x94 entry k,
  * word 0 = buffer + 4 * wordOffset), else its SA block A (GXP +0x7c: SA[sa] = buffer + byteOffset) */
@@ -330,6 +336,7 @@ static int8_t clamp8(int v) { return (int8_t)(v < -128 ? -128 : v > 127 ? 127 : 
 /* a diagnostic switch, read once: getenv walks the environment, and the draw observers called it on every draw (1.4% of
  * Uncharted's main thread, 2026-11-01) */
 static int env_flag(const char *name, int *v) { if (*v < 0) *v = getenv(name) != 0; return *v; }
+static int legacy_instance_fetch = -1;  /* RECOMP_GXM_ONE_INSTANCE diagnostic */
 static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t index_format, uint32_t indices, uint32_t count) {
 	GfxDraw d;
 	memset(&d, 0, sizeof d);
@@ -341,7 +348,14 @@ static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t in
 	d.nattr = (int)RD32(vp + 0x5c); if (d.nattr > 16) d.nattr = 16;
 	memcpy(d.attr, G(RD32(vp + 0x58)), 8 * d.nattr);
 	d.nstream = (int)RD32(vp + 0x64); if (d.nstream > 16) d.nstream = 16;
-	for (int i = 0; i < d.nstream; i++) d.stride[i] = RD16(RD32(vp + 0x60) + 4 * i);
+	/* Done by Codex. Each emitted draw represents one instance, including a single billboard.
+	 * Its instance attributes are constant across vertices; o_draw_instanced advances the base between instances. */
+	uint32_t stream_info = RD32(vp + 0x60);
+	int legacy = env_flag("RECOMP_GXM_ONE_INSTANCE", &legacy_instance_fetch);
+	for (int i = 0; i < d.nstream; i++) {
+		uint32_t entry = stream_info + 4 * i;
+		d.stride[i] = !legacy && (RD16(entry + 2) & 2) ? 0 : RD16(entry);
+	}
 	memcpy(d.stream, stream, sizeof d.stream);
 	/* fragment program: GXP +0, the blend info copy at [+0x68] (0: no blending) */
 	d.fprog = RD32(fp);
@@ -448,9 +462,29 @@ static void o_draw(Cpu *c) {   /* sceGxmDraw(context, primitive, index format, i
 	uint32_t s[16]; streams_of(A0, s);
 	draw(A0, s, A1, A2, A3, STK(0));
 }
-static void o_draw_instanced(Cpu *c) {   /* (context, primitive, index format, indices, count, index wrap): one instance, as gxm.c */
+/* sceGxmDrawInstanced(context, primitive, index format, indices, count, index wrap): count indices, the index list
+ * starting over every `wrap` of them -- count / wrap instances of the first `wrap` indices. A stream whose index source
+ * is an instance one (the vertex program's {stride, index source} +0x60: source bit 1, SCE_GXM_INDEX_SOURCE_INSTANCE_16/32BIT)
+ * steps one stride per instance; the others are read by the indices. Drawn here as one draw per instance, the instance
+ * streams moved on by i strides. Until 2026-11-20 it was one draw of all `count` indices: Phantasy Star Nova draws its
+ * particles as instanced 4-vertex strips (one quad each, the per-particle data an instance stream), and the one long
+ * strip joined every particle to the next -- orange striped panels and wedges of glow across the screen (user's F12
+ * captures, frame_41509 draw 292; docs/psnova/picture-faults.md). RECOMP_GXM_ONE_INSTANCE=1: the old single draw. */
+static void o_draw_instanced(Cpu *c) {
 	uint32_t s[16]; streams_of(A0, s);
-	draw(A0, s, A1, A2, A3, STK(0));
+	const uint32_t cx = A0, prim = A1, ifmt = A2, idx = A3, count = STK(0), wrap = STK(1);
+	int one = env_flag("RECOMP_GXM_ONE_INSTANCE", &legacy_instance_fetch);
+	uint32_t pv = RD32(cx + CX_PVSTATE), vp = pv ? RD32(pv) : RD32(cx + CX_VPROG);
+	if (one || !wrap || wrap >= count || !vp) { draw(cx, s, prim, ifmt, idx, count); return; }
+	uint32_t nstream = RD32(vp + 0x64), sinfo = RD32(vp + 0x60), inst_mask = 0, stride[16] = {0};
+	if (nstream > 16) nstream = 16;
+	for (uint32_t k = 0; k < nstream; k++) { stride[k] = RD16(sinfo + 4 * k); if (RD16(sinfo + 4 * k + 2) & 2) inst_mask |= 1u << k; }
+	uint32_t n = count / wrap; if (n > 4096) n = 4096;
+	for (uint32_t i = 0; i < n; i++) {
+		uint32_t si[16]; memcpy(si, s, sizeof si);
+		for (uint32_t k = 0; k < nstream; k++) if ((inst_mask >> k & 1) && si[k]) si[k] += i * stride[k];
+		draw(cx, si, prim, ifmt, idx, wrap);
+	}
 }
 /* sceGxmDrawPrecomputed(context, draw): the draw keeps its parameters only as the six VDM words at
  * +0x14 and its streams patched into its PDS fetch instance ([+4]) through the vertex program's

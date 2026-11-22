@@ -953,6 +953,53 @@ static void imad_offsets(Gen *g, const UOp *op, int r, int off[4], int *ok) {
  * whether I8MAD should see the full packed word is a question for it, not this port) */
 static uint32_t read_word(Gen *g, const UOperand *o, int off, int *ok) { return read_raw_comp(g, o, off, 0, ok); }
 static void write_word(Gen *g, const UOperand *o, int off, uint32_t v, int *ok) { write_raw_comp(g, o, off, 0, v, ok); }
+/* Done by Codex. PAF text blends packed RGBA with the framebuffer using SOP2. */
+static uint32_t sop2_factor(Spv *s, const uint32_t *values, int arg) {
+	uint32_t factor = values[arg & 0xff];
+	return arg & 0x100 ? fop2(s, SpvOpFSub, c_float(s, 1), factor) : factor;
+}
+static uint32_t sop2_combine(Spv *s, int op, uint32_t a, uint32_t b) {
+	switch (op) {
+	case 0: return fop2(s, SpvOpFAdd, a, b);
+	case 1: return fop2(s, SpvOpFSub, a, b);
+	case 2: return glsl2(s, GLSLFMin, a, b);
+	default: return glsl2(s, GLSLFMax, a, b);
+	}
+}
+static void emit_sop2(Gen *g, const UOp *op, int *ok) {
+	Spv *s = &g->s;
+	if ((op->args[0] & 0xff) > 4 || (op->args[1] & 0xff) > 4 ||
+	    (op->args[2] & 0xff) > 2 || (op->args[3] & 0xff) > 2) {
+		*ok = 0;
+		return;
+	}
+	UOperand src1 = op->s1, src2 = op->s2, dst = op->dst;
+	src1.type = src2.type = dst.type = TY_U32;
+	src1.negabs = 0;
+	for (int r = 0; r < op->reps; r++) {
+		int off[4]; imad_offsets(g, op, r, off, ok);
+		uint32_t a = read_word(g, &src1, off[1], ok), b = read_word(g, &src2, off[2], ok);
+		if (!*ok) return;
+		if (op->s1.negabs & 1) a = uop2(s, SpvOpBitwiseXor, a, c_uint(s, UINT32_MAX));
+		uint32_t v1[4], v2[4];
+		for (int lane = 0; lane < 4; lane++) {
+			v1[lane] = fop2(s, SpvOpFDiv, lane_to_float_spv(s, ubits(s, a, lane * 8, 8), TY_U8), c_float(s, 255));
+			v2[lane] = fop2(s, SpvOpFDiv, lane_to_float_spv(s, ubits(s, b, lane * 8, 8), TY_U8), c_float(s, 255));
+		}
+		uint32_t packed = c_uint(s, 0);
+		for (int lane = 0; lane < 4; lane++) {
+			int alpha = lane == 3;
+			uint32_t values[] = {c_float(s, 0), v1[lane], v2[lane], v1[3], v2[3]};
+			uint32_t left = fop2(s, SpvOpFMul, sop2_factor(s, values, op->args[alpha ? 2 : 0]), v1[lane]);
+			uint32_t right = fop2(s, SpvOpFMul, sop2_factor(s, values, op->args[alpha ? 3 : 1]), v2[lane]);
+			uint32_t value = sop2_combine(s, alpha ? op->sub2 : op->sub, left, right);
+			uint32_t scaled = fop2(s, SpvOpFMul, fclamp(s, value, 0, 1), c_float(s, 255));
+			uint32_t byte = result1(s, &s->func, SpvOpConvertFToU, t_uint(s), fop2(s, SpvOpFAdd, scaled, c_float(s, 0.5f)));
+			packed = bitfield_insert(s, packed, byte, c_uint(s, 8u * (uint32_t)lane), c_uint(s, 8));
+		}
+		write_word(g, &dst, off[3], packed, ok);
+	}
+}
 static void emit_i8mad(Gen *g, const UOp *op, int *ok) {
 	Spv *s = &g->s;
 	for (int r = 0; r < op->reps; r++) {
@@ -1507,6 +1554,15 @@ static uint32_t fsel(Gen *g, uint32_t cond, uint32_t a, uint32_t b) { Spv *s = &
  * interpolant as it stands, as the positional module's, rather than one passed through a select (Metal sampled those
  * slightly differently: single pixels off by up to 171/255 in Killzone captures). Only the projection selects on the
  * draw's count */
+/* RECOMP_PROJ_BEHIND=out (experiment, 2026-11-20): a projective non-dependent read (mode 2/3) whose divisor is <= 0 -- a
+ * point behind the projector -- reads outside the texture (u = v = -4) instead of the mirrored coordinate x/w gives.
+ * Phantasy Star Nova projects its character-shadow image with a perspective projector; ground behind it took the
+ * mirrored silhouette: long dark bands from the character's feet (docs/psnova/picture-faults.md) */
+static int proj_behind_out(void) {
+	static int v = -1;
+	if (v < 0) { const char *e = getenv("RECOMP_PROJ_BEHIND"); v = e && !strcmp(e, "out"); }
+	return v;
+}
 static void canon_nondep_coord(Gen *g, const UsseIter *it, int cube, uint32_t *u, uint32_t *v, uint32_t *w3) {
 	Spv *s = &g->s; const int k = it->tex_coord_src;
 	uint32_t in[4]; for (int c = 0; c < 4; c++) in[c] = canon_in(g, k, c);
@@ -1516,6 +1572,10 @@ static void canon_nondep_coord(Gen *g, const UsseIter *it, int cube, uint32_t *u
 		uint32_t n = canon_ncomp(g, k);
 		uint32_t w = it->tex_proj == 2 ? fsel(g, ugt(g, n, 3), in[3], in[2]) : in[2], div = ugt(g, n, 2);
 		*u = fsel(g, div, fop2(s, SpvOpFDiv, *u, w), *u); *v = fsel(g, div, fop2(s, SpvOpFDiv, *v, w), *v);
+		if (proj_behind_out()) {   /* a point behind the projector (w <= 0): outside the image, not its mirror (see proj_behind_out) */
+			uint32_t behind = result2(s, &s->func, SpvOpLogicalAnd, t_bool(s), div, result2(s, &s->func, SpvOpFOrdLessThanEqual, t_bool(s), w, c_float(s, 0)));
+			*u = fsel(g, behind, c_float(s, -4.0f), *u); *v = fsel(g, behind, c_float(s, -4.0f), *v);
+		}
 	}
 }
 static void emit_sample_nondep(Gen *g, const UsseIter *it, const uint32_t sa_tex_unit[256], int *ok) {
@@ -1536,6 +1596,10 @@ static void emit_sample_nondep(Gen *g, const UsseIter *it, const uint32_t sa_tex
 			int wc = it->tex_proj == 2 && g->vl->ncomp_tex[it->tex_coord_src] > 3 ? 3 : 2;
 			uint32_t w = read_vary_comp(g, base + wc, ok);
 			u = fop2(s, SpvOpFDiv, u, w); v = fop2(s, SpvOpFDiv, v, w);
+			if (proj_behind_out()) {
+				uint32_t behind = result2(s, &s->func, SpvOpFOrdLessThanEqual, t_bool(s), w, c_float(s, 0));
+				u = fsel(g, behind, c_float(s, -4.0f), u); v = fsel(g, behind, c_float(s, -4.0f), v);
+			}
 		}
 	}
 	int slot = it->tex_unit >= 0 && it->tex_unit < 16 ? sampler_slot(g, it->tex_unit) : -1;
@@ -2416,6 +2480,7 @@ SpirvModule usse_spirv_translate(const UsseProgram *prog, const UsseVertexLayout
 			case OP_VTST: emit_vtst(&g, op, &ok); break;
 			case OP_VTSTMSK: emit_vtstmsk(&g, op, &ok); break;
 			case OP_VBW: emit_vbw(&g, op, &ok); break;
+			case OP_SOP2: emit_sop2(&g, op, &ok); break;
 			case OP_I8MAD: emit_i8mad(&g, op, &ok); break;
 			case OP_I16MAD: emit_i16mad(&g, op, &ok); break;
 			case OP_I32MAD: emit_i32mad(&g, op, &ok); break;

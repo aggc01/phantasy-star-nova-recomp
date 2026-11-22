@@ -136,10 +136,11 @@ static const GfxTarget *transient_depth(const GfxTarget *t, GfxTarget *out) {
 	out->ds_background_depth = 1.0f; out->ds_background_stencil = 0; out->ds_force_load = out->ds_force_store = 0;
 	return out;
 }
+static void draws_flush(void);
 void gfx_begin_scene(const GfxTarget *t) {
 	int m = metrics_on(); uint64_t t0 = m ? now_us() : 0;
 	GfxTarget dims, tdepth;
-	LOCKED(gfxcap_scene(t); gfxcov_scene(t); t = scene_dims(t, &dims); t = transient_depth(t, &tdepth); scene_target = *t; if (gpu_backend()) gfx_gpu_begin_scene(t); else gfx_soft_begin_scene(t));
+	LOCKED(draws_flush(); gfxcap_scene(t); gfxcov_scene(t); t = scene_dims(t, &dims); t = transient_depth(t, &tdepth); scene_target = *t; if (gpu_backend()) gfx_gpu_begin_scene(t); else gfx_soft_begin_scene(t));
 	if (m) { metrics_add_render(now_us() - t0); metrics_add_scene(); }
 }
 static uint64_t presented;   /* frames presented so far (point_draw_seen's log line) */
@@ -153,14 +154,44 @@ static void point_draw_seen(const GfxDraw *d) {
 	if (n < 8) { n++; fprintf(stderr, "    gfx: frame %llu: point sprite draw, %u points, polygon mode %u, width %u, vprog %#x fprog %#x\n", (unsigned long long)presented, d->count, d->polygon_mode, d->point_line_width, d->vprog, d->fprog); }
 	if (cap == 1) { cap = 2; gfxcap_request(); fprintf(stderr, "capture requested (RECOMP_CAPTURE_ON_POINTS)\n"); }
 }
+static void draw_now(const GfxDraw *d) {   /* (under the lock) */
+	GfxDraw tmp;
+	{	/* RECOMP_LOG_FPROG=<hex fprog>: each draw with that fragment program logs the time and its default fragment uniforms'
+		 * first 8 words -- a diagnostic (Phantasy Star Nova's cutscene composite 0x11109e00: its colour matrix, the fade) */
+		static uint32_t want = 1; if (want == 1) { const char *e = getenv("RECOMP_LOG_FPROG"); want = e && *e ? (uint32_t)strtoul(e, 0, 16) : 0; }
+		if (want && (d->fprog == want || d->vprog == want) && d->funiforms) {   /* (a vertex program's address matches too) */
+			fprintf(stderr, "    fprog %#x at %.3f s:", d->fprog, plat_now_us() / 1e6);
+			for (int k = 0; k < 8; k++) fprintf(stderr, " %08x", RD32(d->funiforms + 4u * (uint32_t)k));
+			fprintf(stderr, "\n");
+		}
+	}
+	rc_on_draw(d); gfxcap_draw(d); gfxcov_draw(d); d = backend_draw(d, &tmp); if (gpu_backend()) gfx_gpu_draw(d); else gfx_soft_draw(d);
+}
+/* RECOMP_DEFER_DRAWS=1: a scene's draws are held until the scene ends (or anything that needs its picture: a read of guest
+ * memory a target may hold, a present, the next scene) and drawn then, reading their vertices, indices, uniforms and
+ * textures from guest memory at that point -- as the console's GPU does, which reads them only after the scene is kicked.
+ * A game may write a draw's vertices AFTER its sceGxmDraw call: Phantasy Star Nova's weapon trails (ribbons) do, and drawn
+ * at the call they took the buffer's stale contents of another layout -- huge red/green/black wedges across the screen in
+ * fights (frame_27118 draw 572, 2026-11-20). GfxDraw holds values and guest addresses only, so a copy is the whole draw.
+ * Off by default (the pack's RUN_ENV turns it on); 0: drawn at the call, as before. */
+static int defer_draws(void) { static int v = -1; if (v < 0) { const char *e = getenv("RECOMP_DEFER_DRAWS"); v = e && *e && atoi(e) != 0; if (v) fprintf(stderr, "    gfx: draws held until their scene ends (RECOMP_DEFER_DRAWS)\n"); } return v; }
+static GfxDraw *dq; static uint32_t dq_n, dq_cap;
+static void draws_flush(void) {   /* (under the lock: the queue is the lock's) */
+	if (!dq_n) return;
+	const uint32_t n = dq_n; dq_n = 0;   /* (a draw that ends up here again -- none should -- starts a new queue) */
+	for (uint32_t i = 0; i < n; i++) draw_now(&dq[i]);
+}
 void gfx_draw(const GfxDraw *d) {
 	int m = metrics_on(); uint64_t t0 = m ? now_us() : 0;
-	GfxDraw tmp;
 	if (gfx_prim_kind(d->prim) == GFX_PRIM_POINTS) point_draw_seen(d);
-	LOCKED(rc_on_draw(d); gfxcap_draw(d); gfxcov_draw(d); d = backend_draw(d, &tmp); if (gpu_backend()) gfx_gpu_draw(d); else gfx_soft_draw(d));
+	if (defer_draws()) {
+		LOCKED(
+			if (dq_n == dq_cap) { uint32_t nc = dq_cap ? 2 * dq_cap : 1024; GfxDraw *q = realloc(dq, (size_t)nc * sizeof *dq); if (q) { dq = q; dq_cap = nc; } }
+			if (dq_n < dq_cap) dq[dq_n++] = *d; else draw_now(d));   /* (no memory for the queue: drawn now) */
+	} else LOCKED(draw_now(d));
 	if (m) { metrics_add_render(now_us() - t0); metrics_add_draw(); }
 }
-void gfx_sync_to_guest(void) { LOCKED(if (gpu_backend()) gfx_gpu_sync_all()); }
+void gfx_sync_to_guest(void) { LOCKED(draws_flush(); if (gpu_backend()) gfx_gpu_sync_all()); }
 void gfx_guest_writing(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend()) gfx_gpu_guest_writing(addr, len)); }   /* a CPU write into guest memory: before and after (the software path reads memory directly: nothing to do) */
 void gfx_guest_written(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend()) gfx_gpu_guest_written(addr, len)); }
 void gfx_vis_write(uint32_t addr, uint32_t count) {   /* (inside a renderer entry point: the lock is recursive) */
@@ -168,7 +199,7 @@ void gfx_vis_write(uint32_t addr, uint32_t count) {   /* (inside a renderer entr
 	if (log) { static int n; if (n++ < 2000) fprintf(stderr, "    vis: %#x = %u\n", addr, count); }
 	gfx_guest_writing(addr, 4); WR32(addr, count); gfx_guest_written(addr, 4);
 }
-void gfx_guest_reading(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend()) gfx_gpu_guest_reading(addr, len)); }
+void gfx_guest_reading(uint32_t addr, uint32_t len) { LOCKED(draws_flush(); if (gpu_backend()) gfx_gpu_guest_reading(addr, len)); }
 void gfx_guest_replacing(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend()) gfx_gpu_guest_replacing(addr, len)); }   /* a file read into guest memory (gfx.h) */
 void gfx_guest_replaced(uint32_t addr, uint32_t len) { LOCKED(if (gpu_backend()) gfx_gpu_guest_replaced(addr, len)); }
 /* a scene's notification held back until its visibility counts land (gfx_gpu.c gfx_gpu_vis_defer): the kick hands its
@@ -187,10 +218,10 @@ int gfx_kick_defer(const uint32_t *addr, const uint32_t *val, int n) {
 	return r;
 }
 void gfx_vis_settle(void) { if (gfx_gpu_vis_deferred()) LOCKED(gfx_gpu_vis_flush(1)); }
-int gfx_transfer_downscale(uint32_t src, uint32_t sw, uint32_t sh, uint32_t sstride, uint32_t dst, uint32_t dstride) { int r = 0; LOCKED(if (gpu_backend()) r = gfx_gpu_transfer_downscale(src, sw, sh, sstride, dst, dstride)); return r; }   /* a CPU read of guest memory a GPU target may hold newer: the download only */
+int gfx_transfer_downscale(uint32_t src, uint32_t sw, uint32_t sh, uint32_t sstride, uint32_t dst, uint32_t dstride) { int r = 0; LOCKED(draws_flush(); if (gpu_backend()) r = gfx_gpu_transfer_downscale(src, sw, sh, sstride, dst, dstride)); return r; }   /* a CPU read of guest memory a GPU target may hold newer: the download only */
 void gfx_end_scene(void) {
 	int m = metrics_on(); uint64_t t0 = m ? now_us() : 0;
-	LOCKED(rc_on_end_scene(); gfxcap_end_scene(); if (gpu_backend()) gfx_gpu_end_scene(); else gfx_soft_end_scene());
+	LOCKED(draws_flush(); rc_on_end_scene(); gfxcap_end_scene(); if (gpu_backend()) gfx_gpu_end_scene(); else gfx_soft_end_scene());
 	if (m) metrics_add_render(now_us() - t0);
 }
 void gfx_frame_queued(void) {   /* (the game's thread: under the lock, as its draws; only the motion vectors use it: RECOMP_MV, RECOMP_FSR) */
@@ -232,6 +263,7 @@ void gfx_present(uint32_t base, uint32_t width, uint32_t height, uint32_t pitch,
 	int m = metrics_on(); uint64_t t0 = m ? now_us() : 0;
 	presented++;
 	LOCKED(
+		draws_flush();
 		gfxcap_present(base, width, height, pitch, format);
 		gfxcov_present(format);
 		if (gpu_backend()) gfx_gpu_present(base, width, height, pitch, format);

@@ -73,9 +73,34 @@ enum {
 };
 static uint32_t h_param_base(uint32_t p) { return RD32(p + H_PARAM_OFF) ? p + H_PARAM_OFF + RD32(p + H_PARAM_OFF) : 0; }
 static uint32_t param_at(uint32_t base, int i) { return base + 16 * i; }
+/* a header table's entry count, bounded: the table must lie inside the program's own size (header +8, as usse_gxp_hash
+ * reads it), and at most `cap` entries. The counts were looped over as they stood, and some GXP-shaped blobs in a game's
+ * files carry absurd ones: Phantasy Star Nova's disc1/f00001.bin has a "program" with 2,702,302,092 uniform buffer
+ * entries. The predicted-pipelines pass decoded those blobs on the render thread under gfx_lock, ~18 billion loop steps
+ * over 9 of them: the 16-18 s black screen at every start (2026-11-19, docs/psnova/external-fix-list-check.md; another
+ * port of the game found the same). Real programs' tables are small and inside the program, so nothing real changes. */
+enum { H_CAP_PARAMS = 1024, H_CAP_LITERALS = 512, H_CAP_UBINFO = 256, H_CAP_DEPSAMP = 256, H_CAP_CONTAINERS = 64 };
+static uint32_t h_table_count_at(const uint8_t *b, uint32_t size, int count_field, int off_field, uint32_t entry, uint32_t cap) {
+	uint32_t n, off; memcpy(&n, b + count_field, 4); memcpy(&off, b + off_field, 4);
+	if (!n || !off) return 0;
+	uint64_t start = (uint64_t)off_field + off;
+	if (start >= size) return 0;
+	uint64_t fit = (size - start) / entry;
+	if (n > fit) n = (uint32_t)fit;
+	return n > cap ? cap : n;
+}
+static uint32_t h_prog_size(uint32_t p) { uint32_t n = RD32(p + 8); return n < 128 || n > (1u << 20) ? 128 : n; }
+static uint32_t h_table_count(uint32_t p, int count_field, int off_field, uint32_t entry, uint32_t cap) {
+	uint32_t n = RD32(p + count_field);
+	uint32_t c = h_table_count_at(G(p), h_prog_size(p), count_field, off_field, entry, cap);
+	if (c != n && n) {   /* the first few said (render thread and build workers alike) */
+		static int said; if (__atomic_fetch_add(&said, 1, __ATOMIC_RELAXED) < 16) fprintf(stderr, "    usse: program %#x: header field +%d says %u entries, %u fit (bounded)\n", p, count_field, n, c);
+	}
+	return c;
+}
 /* a container's (base_sa_offset, size_in_f32), or -1 if that container_index is absent */
 static int find_container(uint32_t p, int idx, int *base_sa, int *size_f32) {
-	uint32_t n = RD32(p + H_CONTAINER_COUNT), base = RD32(p + H_CONTAINER_OFF) ? p + H_CONTAINER_OFF + RD32(p + H_CONTAINER_OFF) : 0;
+	uint32_t n = h_table_count(p, H_CONTAINER_COUNT, H_CONTAINER_OFF, 8, H_CAP_CONTAINERS), base = RD32(p + H_CONTAINER_OFF) ? p + H_CONTAINER_OFF + RD32(p + H_CONTAINER_OFF) : 0;
 	for (uint32_t i = 0; i < n; i++) {
 		uint32_t c = base + 8 * i;
 		if (RD16(c) == (uint16_t)idx) { *base_sa = RD16(c + 4); *size_f32 = RD16(c + 6); return 1; }
@@ -1037,9 +1062,13 @@ static uint32_t u8_pack4(const float v[4]) {
 static float cop_eval(int op, float x, float y) { switch (op) { case 0: return x + y; case 1: return x - y; case 2: return x < y ? x : y; default: return x > y ? x : y; } }
 static void exec_sop2(Ctx *cx, const UOp *op) {
 	static const int unit[4] = {1, 1, 1, 1};
+	/* Done by Codex. SOP2 reads and writes whole packed RGBA words. */
+	UOperand src1 = op->s1, src2 = op->s2, dst = op->dst;
+	src1.type = src2.type = dst.type = TY_U32;
+	src1.negabs = 0;   /* SOP2 applies this as a per-channel complement below. */
 	for (int r = 0; r < op->reps; r++) {
 		int off1 = slot_offset(cx, op->repmode, op->s1.bank, 1, r, unit), off2 = slot_offset(cx, op->repmode, op->s2.bank, 2, r, unit), offd = slot_offset(cx, op->repmode, op->dst.bank, 3, r, unit);
-		uint32_t w1 = read_i32(cx, &op->s1, off1, 0), w2 = read_i32(cx, &op->s2, off2, 0);
+		uint32_t w1 = read_i32(cx, &src1, off1, 0), w2 = read_i32(cx, &src2, off2, 0);
 		float c1[3], a1, c2[3], a2; u8_unpack(w1, c1, &a1); u8_unpack(w2, c2, &a2);
 		if (op->s1.negabs & 1) { for (int k = 0; k < 3; k++) c1[k] = 1 - c1[k]; a1 = 1 - a1; }
 		int csel1 = op->args[0] & 0xFF, cmod1 = op->args[0] & 0x100, csel2 = op->args[1] & 0xFF, cmod2 = op->args[1] & 0x100;
@@ -1055,7 +1084,7 @@ static void exec_sop2(Ctx *cx, const UOp *op) {
 		float out[4];
 		for (int k = 0; k < 3; k++) out[k] = cop_eval(op->sub, cf1[k] * c1[k], cf2[k] * c2[k]);
 		out[3] = cop_eval(op->sub2, af1 * a1, af2 * a2);
-		write_raw_lane(cx, &op->dst, offd, 0, u8_pack4(out));
+		write_raw_lane(cx, &dst, offd, 0, u8_pack4(out));
 	}
 }
 static void exec_sop2m(Ctx *cx, const UOp *op) {
@@ -1493,7 +1522,7 @@ static void parse_vertex_layout(uint32_t p, UsseVertexLayout *vl) {
 	vl->index_reg = vl->instance_reg = -1;
 	for (int i = 0; i < 10; i++) vl->o_tex[i] = -1;
 	vl->o_color0 = vl->o_color1 = vl->o_fog = vl->o_psize = -1;
-	uint32_t cnt = RD32(p + H_PARAM_COUNT), base = h_param_base(p);
+	uint32_t cnt = h_table_count(p, H_PARAM_COUNT, H_PARAM_OFF, 16, H_CAP_PARAMS), base = h_param_base(p);
 	for (uint32_t i = 0; i < cnt && vl->nattrs < USSE_MAX_ATTRS; i++) {
 		uint32_t pr = param_at(base, (int)i);
 		int cat = RD16(pr + 4) & 15;
@@ -1594,7 +1623,20 @@ int usse_gxp_sane(const void *gxp, uint32_t size) {
 	const uint64_t end = size, pn = f[0], pc = H_PRIM_OFF + (uint64_t)f[1], s0 = f[3], s1 = f[4];
 	if (size < 128 || pn > (1u << 16) || (pn && pc + 8 * pn > end)) return 0;
 	uint64_t sn = s1 + 4 >= s0 ? (s1 + 4 - s0) / 8 : 0; if (f[2] && f[2] < sn) sn = f[2];   /* (decode_program's) */
-	return !sn || (sn <= (1u << 16) && H_SEC_OFF + s0 + 8 * sn <= end);
+	if (sn && (sn > (1u << 16) || H_SEC_OFF + s0 + 8 * sn > end)) return 0;
+	/* and each header table within the program and of a sane size (h_table_count): a blob whose counts don't fit isn't a
+	 * program (gxp_index.c filters the game's files with this) */
+	static const struct { int count, off; uint32_t entry, cap; } tab[5] = {
+		{H_PARAM_COUNT, H_PARAM_OFF, 16, H_CAP_PARAMS}, {H_LITERALS_COUNT, H_LITERALS_OFF, 8, H_CAP_LITERALS},
+		{H_UBINFO_COUNT, H_UBINFO_OFF, 8, H_CAP_UBINFO}, {H_DEPSAMP_COUNT, H_DEPSAMP_OFF, 4, H_CAP_DEPSAMP},
+		{H_CONTAINER_COUNT, H_CONTAINER_OFF, 8, H_CAP_CONTAINERS}};
+	for (int i = 0; i < 5; i++) {
+		if ((uint32_t)tab[i].off + 4 > size) continue;   /* (a blob shorter than the header: the caller's buffer holds `size` bytes, at least 128) */
+		uint32_t n; memcpy(&n, b + tab[i].count, 4);
+		if (n && h_table_count_at(b, size, tab[i].count, tab[i].off, tab[i].entry, 0xffffffffu) != n) return 0;
+		if (n > tab[i].cap) return 0;
+	}
+	return 1;
 }
 static uint32_t prog_content_hash(uint32_t addr, uint32_t *size) { return usse_gxp_hash(G(addr), size); }
 uint32_t usse_program_hash(const UsseProgram *p) { return p->hash; }
@@ -1679,7 +1721,7 @@ const UsseAttrSlot *usse_find_attr(const UsseVertexLayout *vl, int reg) {
 static UsseUniformFilter uniform_filter;
 void usse_set_uniform_filter(UsseUniformFilter f) { uniform_filter = f; }
 int usse_param_resource(uint32_t prog, const char *name, int *container) {
-	uint32_t cnt = RD32(prog + H_PARAM_COUNT), base = h_param_base(prog);
+	uint32_t cnt = h_table_count(prog, H_PARAM_COUNT, H_PARAM_OFF, 16, H_CAP_PARAMS), base = h_param_base(prog);
 	for (uint32_t i = 0; base && i < cnt && i < 256; i++) {
 		uint32_t pr = param_at(base, (int)i);
 		if (strcmp((const char *)G(pr + RD32(pr)), name)) continue;
@@ -1694,7 +1736,7 @@ static void literals_load(const UsseProgram *p, UsseDraw *d) {
 	int c19base = 0, c19size = 0; find_container(prog, 19, &c19base, &c19size);
 	int c16base = 0, c16size = 0;
 	int litbase = find_container(prog, 16, &c16base, &c16size) ? c16base : c19base;
-	uint32_t lcnt = RD32(prog + H_LITERALS_COUNT), lbase = RD32(prog + H_LITERALS_OFF) ? prog + H_LITERALS_OFF + RD32(prog + H_LITERALS_OFF) : 0;
+	uint32_t lcnt = h_table_count(prog, H_LITERALS_COUNT, H_LITERALS_OFF, 8, H_CAP_LITERALS), lbase = RD32(prog + H_LITERALS_OFF) ? prog + H_LITERALS_OFF + RD32(prog + H_LITERALS_OFF) : 0;
 	for (uint32_t i = 0; i < lcnt; i++) {
 		uint32_t e = lbase + 8 * i; int off = (int)RD32(e); uint32_t val = RD32(e + 4);
 		int at = litbase + off; if (at >= 0 && at < 256) d->sa[at].u = val;
@@ -1713,7 +1755,7 @@ void usse_setup_registers(const UsseProgram *p, UsseDraw *d, uint32_t def_unifor
 	}
 	int c19base = 0, c19size = 0; find_container(prog, 19, &c19base, &c19size);
 	literals_load(p, d);
-	uint32_t ucnt = RD32(prog + H_UBINFO_COUNT), ubase = RD32(prog + H_UBINFO_OFF) ? prog + H_UBINFO_OFF + RD32(prog + H_UBINFO_OFF) : 0;
+	uint32_t ucnt = h_table_count(prog, H_UBINFO_COUNT, H_UBINFO_OFF, 8, H_CAP_UBINFO), ubase = RD32(prog + H_UBINFO_OFF) ? prog + H_UBINFO_OFF + RD32(prog + H_UBINFO_OFF) : 0;
 	for (uint32_t i = 0; i < ucnt; i++) {
 		uint32_t e = ubase + 8 * i; int reside = RD16(e); int ldst_off = RD16(e + 2); int32_t bias = (int32_t)RD32(e + 4);
 		uint32_t addr = 0;
@@ -1722,7 +1764,7 @@ void usse_setup_registers(const UsseProgram *p, UsseDraw *d, uint32_t def_unifor
 		else if (reside == 16) addr = p->literal_addr;
 		if (addr) { int at = c19base + ldst_off; if (at >= 0 && at < 256) d->sa[at].u = addr + (uint32_t)bias; }
 	}
-	uint32_t depcnt = RD32(prog + H_DEPSAMP_COUNT), depbase = RD32(prog + H_DEPSAMP_OFF) ? prog + H_DEPSAMP_OFF + RD32(prog + H_DEPSAMP_OFF) : 0;
+	uint32_t depcnt = h_table_count(prog, H_DEPSAMP_COUNT, H_DEPSAMP_OFF, 4, H_CAP_DEPSAMP), depbase = RD32(prog + H_DEPSAMP_OFF) ? prog + H_DEPSAMP_OFF + RD32(prog + H_DEPSAMP_OFF) : 0;
 	for (uint32_t i = 0; i < depcnt; i++) {
 		uint32_t e = depbase + 4 * i; int rilo = RD16(e), sa_off = RD16(e + 2);
 		int unitn = rilo / 4, word = rilo % 4;
