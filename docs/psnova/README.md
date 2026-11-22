@@ -20,15 +20,17 @@ Read that before debugging anything here.
 
 ## How it is built here
 
-Everything runs from this worktree with the main Uncharted checkout's Python and toolchain, read by path:
+Everything runs from this folder, its own git repository since 2026-11-19, with its own Python (`tools/python` +
+`.venv`) and toolchain (`toolchain/`), nothing borrowed from the Uncharted checkout (record and undo:
+[separation-from-uncharted.md](separation-from-uncharted.md)):
 
 ```bash
 bash dev/psn_build_all.sh                    # import -> analyze -> recompile -> build, logs in dev/psn-logs/
 STAGES="build" bash dev/psn_build_all.sh     # one stage
 ```
 
-The pipeline driver by hand: `"<main checkout>/.venv/Scripts/python.exe" pipeline/vitarecomp.py <stage> PCSG00351`
-with `ATIV_WIN_TOOLCHAIN=<main checkout>/toolchain`.
+The pipeline driver by hand: `.venv/Scripts/python.exe -s pipeline/vitarecomp.py <stage> PCSG00351` (the build finds
+`toolchain/` by itself; `ATIV_WIN_TOOLCHAIN` only to use another one).
 
 Stages as run on 2026-11-18 (single run each):
 
@@ -144,6 +146,7 @@ message file extracted from both archives) lists and extracts CRI CPK archives, 
 | Saves (savedata0 in `recomp/fs/`) | the character-creation save writes (569,108 bytes through the save dialog, slot 0); a copy in `dump/saves/after-creation-2026-11-18/` for runs that CONTINUE; loading not tried | single run |
 | Dialogue box, HUD, Filldia, Nova's armour | **fixed** (2026-11-18 evening): the renderer downloaded character creation's stale RGBA targets over textures the game later copied into the same memory; downloads now keep the pages the game rewrote (gfx_gpu.c `kept_pages_find`, journal "Noisy textures") | two runs (screenshots), reviewed by two agents |
 | NOW LOADING screen (and the UI file the rePatch dropped) | **fixed**: the English rePatch's patch archive lacks `tex_nova_ui_common.aif`; `REPATCH_KEEP` (pack.toml) makes import merge it in (`pipeline/cri/`, `dump/decrypted/PCSG00351/repatch_merged/`) | three runs |
+| Frame rate | **30 fps steady, 60 fps mode** (2026-11-19): GPU views for ARGB targets (copy-back gone), 1-edge flips, precise DelayThreadCB sleeps, the game's own target set by a hook; arena 56-60 fps at 60; `frame_rate = 60` in recomp/settings.ini, F10 switches ([frame-rate.md](frame-rate.md)) | test58/63/67 (headless); windowed 2x not measured |
 | Line primitives | `prim LINES` draws are skipped by both renderers (4,014 from frame 15,565 into a U8 target); no visible effect found yet | open |
 | Arabic text (every-project standard) | not started | n/a |
 | Keyboard keys in button prompts (every-project standard) | not started | n/a |
