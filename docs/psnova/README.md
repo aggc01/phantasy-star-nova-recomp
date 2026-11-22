@@ -6,6 +6,10 @@ The one state file for this game. Correct it in place when a finding changes; gi
 The journey behind it (what was tried, the dead ends, the techniques and the traps): [journal-2026-11-18.md](journal-2026-11-18.md).
 Read that before debugging anything here.
 
+**Last reconciled 2026-11-22** against the dated notes in this folder (the Status table and Open questions below; the
+other sections are the 2026-11-18/19 record and are kept as history). When a dated note and this file disagree, the
+newer one wins: correct this file.
+
 ## The game
 
 | | |
@@ -16,7 +20,7 @@ Read that before debugging anything here.
 | Main program | NovaMRom, `eboot.bin` (28.4 MB as ELF); 1.05 SHA-256 `abb45e17...edcf3`, 1.00 `f4b3a669...2542` |
 | System libraries it imports | 33 libraries, 500 functions: GXM, libc, kernel, NGS (sound), AvPlayer (movies), Fiber, SaveData/IME/NetCheck dialogs, NP Trophy, Net (offline) |
 | Data | CRI CPK archives: `NOVA_FileList_Vita.cpk` (2.8 GB), `_movie.cpk` (395 MB), the update's `_patch.cpk` (155 MB) |
-| Code size | 39,840 functions found; 7.7 M instructions translated to 1.1 GB of C in 100 parts |
+| Code size | 40,427 functions in the current analysis (Codex's count, 2026-11-22; 39,840 on 2026-11-18); 7.7 M instructions translated to 1.1 GB of C in 100 parts |
 
 ## How it is built here
 
@@ -133,24 +137,39 @@ message file extracted from both archives) lists and extracts CRI CPK archives, 
 | Imports | 649: 245 runtime, 331 Sony's recompiled libraries, 73 stubs (below) | single run |
 | First boot (headless, GPU) | 4 modules start, the game runs 30,821 system calls on 30 threads, then calls a missed ARM function (fixed, see above) | single run |
 | Boot to title | **reached**: the title screen renders correctly (`docs/psnova/title-2026-11-18.png`), ~28 fps headless on the GPU | proven (many runs) |
-| English (rePatch) | applied (`vitarecomp repatch`): "English patch [DEBUG BUILD]" on the title, the patch's own credit movie plays | proven (screenshots) |
+| English via the fan rePatch (history) | worked (`vitarecomp repatch`: "English patch [DEBUG BUILD]" on the title), then **retired** 2026-11-18 evening for our own overlay (`REPATCH = "off"`; see "English text" below) | proven (screenshots), no longer used |
 | Movies (the firmware's AvPlayer + host H.264) | the three start-up movies decode and show (after the block alignment and decoder-size fixes); the opening movie's "garbled" lines are SEGA's own in-universe script (checked against Chrome's decode of the same file) | proven (screenshots) |
 | Buttons | **work** after the SceCtrlData fix: Start skips the movie and opens the menu, Cross closes dialogs, Circle confirms (Japanese layout) | proven (scripted runs, screenshots) |
-| Main menu, NEW GAME, story intro | reached: NEW GAME / CONTINUE / OPTION, the PSO2 bonus dialog, then the intro movie with the patch's English subtitles | proven (screenshots) |
-| Windowed launch | `Play Phantasy Star Nova.bat` started through Explorer: window, 2x render scale, movies | single run (nobody has played it by hand) |
-| Saves of other titles | "not found" (PSO2 bonus and demo import no longer offered: neither save exists here); this game's own slots listed by the slot search | single run |
-| Character creation | all steps, skinned characters on the GPU (shader loops), the name typed through SceIme ("Nova" by default, `RECOMP_IME_TEXT`) | proven (screenshots) |
-| Sound (NGS, ATRAC9) | **starts** since the NGS memory-size fix (CRI ADX2 refused > 0x1ff0): 11 NGS systems, the game's port carries the title music (rms 1,500-3,700); its mixer needed `vqmovn`/`vzip`/q `vshr.u64` in the recompiler (journal, sound section) | single run (levels, not by ear) |
+| Main menu, NEW GAME, story intro | reached: NEW GAME / CONTINUE / OPTION, the PSO2 bonus dialog, then the intro movie (with burned-in English subtitles since the movie work below) | proven (screenshots) |
+| Hand play by the user (windowed) | **yes**: 2026-11-19 (into the Filldia cutscene; a crash and a freeze, both since fixed), 2026-11-20 (F12 captures), 2026-11-21 (bridge and captain-death scenes confirmed correct), 2026-11-22 (a 2 h 25 min session: the slowdown below) | proven (user) |
+| Saves of other titles | "not found" (PSO2 bonus and demo import no longer offered: neither save exists here); this game's own slots listed by the slot search. `sceAppUtilSaveDataMount` itself unchanged (next steps) | single run |
+| Character creation | all steps, skinned characters on the GPU (shader loops) | proven (screenshots) |
+| Name entry | the PC name editor in the window (controller grid, or a keyboard/mouse text field, 10 characters): typed and cancelled, and a controller-grid name reached "Start the Game". Not tried: a physical gamepad, saving and reloading a newly named character. Headless runs keep the fixed answer ("Nova", `RECOMP_IME_TEXT`) ([codex-save-and-name-dialogs-2026-11-21.md](codex-save-and-name-dialogs-2026-11-21.md)) | single run (synthetic input) |
+| Sound (NGS, ATRAC9) | **starts** since the NGS memory-size fix (11 NGS systems, title music; journal, sound section). **Chopping fixed** 2026-11-19: the A/V delay's silence top-up made 12-27 clicks a second; after the fix 0 top-ups, real-time rate. Checked on the title music only; gameplay and movie sound not rechecked, and the user has not confirmed by ear ([audio.md](audio.md)) | single run (title, windowed) |
 | After "Start the Game" | **fixed** (2026-11-18 afternoon): the abort was a recompiler bug -- tail calls set lr (journal, abort section; recomp.py `tail()`). Now: the save, the warp cutscene, the ship corridor and Rietheia's dialogue | single run (screenshots) |
 | Training arena (tutorial) | **all quests cleared by the scripted play** -- move to the arrows, attack, avoid/block, annihilate -- and on to the next story scene (Lutina) by frame ~27,600 (take 7; `dev/psnova/make_arena_inputs.py`) | recording run (take 7) |
-| Saves (savedata0 in `recomp/fs/`) | the character-creation save writes (569,108 bytes through the save dialog, slot 0); a copy in `dump/saves/after-creation-2026-11-18/` for runs that CONTINUE; loading not tried | single run |
+| Saves: writing | the character-creation save writes (569,108 bytes through the save dialog, slot 0); a copy in `dump/saves/after-creation-2026-11-18/` | single run |
+| Saves: the PC save picker and loading | the recomp's own picker (original slot ids and callbacks; class and chapter in English). On an isolated copy, the Force Lv6 slot loaded (`savedata1.bin` opened, the character in gameplay, all slot files byte-identical afterwards); slot 2 resumed at the base. The user's own loads appear in the 2026-11-22 log. A freeze at the load list was the launcher cutting UTF-8 characters, fixed 2026-11-20 ([codex-save-and-name-dialogs-2026-11-21.md](codex-save-and-name-dialogs-2026-11-21.md), [picture-faults.md](picture-faults.md)) | single run (isolated copies) + user's runs |
+| Save backups (F10 > Saves) | back up, restore (asks first, keeps a "before restore" copy), delete; copies of the save folder, not save states; 17/17 unit checks, windowed check clean ([save-backups.md](save-backups.md)) | single run |
+| Vita firmware dialogs (native save picker, IME) | **paused** at the player's request; normal play uses the PC dialogs. Picker: three rows draw with icons but no text (PAF's layout loops on `scePvfGetCharInfo`, 28,898 calls, never asks for a glyph), and a chosen slot did not open its file. IME: `sceImeOpen` fails (0x80100705; no shell IPC server or IME plug-in) ([codex-vita-firmware-dialogs-2026-11-22.md](codex-vita-firmware-dialogs-2026-11-22.md)) | open (paused) |
 | Dialogue box, HUD, Filldia, Nova's armour | **fixed** (2026-11-18 evening): the renderer downloaded character creation's stale RGBA targets over textures the game later copied into the same memory; downloads now keep the pages the game rewrote (gfx_gpu.c `kept_pages_find`, journal "Noisy textures") | two runs (screenshots), reviewed by two agents |
-| NOW LOADING screen (and the UI file the rePatch dropped) | **fixed**: the English rePatch's patch archive lacks `tex_nova_ui_common.aif`; `REPATCH_KEEP` (pack.toml) makes import merge it in (`pipeline/cri/`, `dump/decrypted/PCSG00351/repatch_merged/`) | three runs |
-| Frame rate | **30 fps steady, 60 fps mode** (2026-11-19): GPU views for ARGB targets (copy-back gone), 1-edge flips, precise DelayThreadCB sleeps, the game's own target set by a hook; arena 56-60 fps at 60; `frame_rate = 60` in recomp/settings.ini, F10 switches ([frame-rate.md](frame-rate.md)) | test58/63/67 (headless); windowed 2x not measured |
-| Line primitives | `prim LINES` draws are skipped by both renderers (4,014 from frame 15,565 into a U8 target); no visible effect found yet | open |
-| Arabic text (every-project standard) | not started | n/a |
-| Keyboard keys in button prompts (every-project standard) | not started | n/a |
-| Real-game reference pictures | none yet: needed before any visual change | n/a |
+| NOW LOADING screen | **fixed** while the rePatch was in use (`REPATCH_KEEP` merges back `tex_nova_ui_common.aif`, which the rePatch dropped). Moot now that `REPATCH = "off"`; the screen is redrawn by our own UI textures | three runs (then) |
+| Frame rate | **30 fps steady, 60 fps mode** (2026-11-19): GPU views for ARGB targets (copy-back gone), 1-edge flips, precise DelayThreadCB sleeps, the game's own target set by the `psn_frame_rate` hook; `frame_rate = 60` in recomp/settings.ini, F10 switches ([frame-rate.md](frame-rate.md)). Arena 56-60 fps at 60 headless; windowed 2x and 4x base routes 59.99-60.02 (2026-11-22). Fixed-step effects and cutscene timing at 60 not checked broadly | proven (several runs) |
+| Long-session slowdown | **open, cause unknown** (2026-11-22): in the user's 2 h 25 min session at 60 fps, after loading the Force Lv6 slot, the frame rate fell to 15.9 then 8.5 fps, with 1,243 hitches of 100 ms or more. Two fresh base tests did not reproduce it; GPU-fence and wait data were not recorded for that interval and the route was not recorded. The launcher now writes those measurements to `session.log` on every Nova run ([codex-fps-investigation-2026-11-22.md](codex-fps-investigation-2026-11-22.md)) | open |
+| Line primitives | **drawn** (2026-11-20): 2D lines as GPU quads (`lines_as_quads`), 3D lines as a LINELIST pipeline; fixed the shadow edges in replay. `RECOMP_NO_LINES=1` / `RECOMP_GPU_SOFT_LINES=1` to compare ([picture-faults.md](picture-faults.md)) | single run (replays) |
+| Depth clip | **on** (`RECOMP_GPU_DEPTH_CLIP=1` in RUN_ENV, 2026-11-20): restores Kisara's console and Fildia on the bridge, against Vita reference frames; supersedes the earlier "needs a game camera change" and "changed nothing" notes ([codex-render-investigation-2026-11-20.md](codex-render-investigation-2026-11-20.md)) | proven (replays + user-confirmed scenes 2026-11-21) |
+| Colours (sRGB) | **on** (`RECOMP_SRGB=1` in RUN_ENV and TEST_ENV, 2026-11-19): the Lutina cutscene matches the Vita; the after-landing magenta sky not yet seen with it on ([cutscene-colours.md](cutscene-colours.md)) | proven for the cutscene |
+| Instanced draws, deferred draws | one draw per instance (stripes and beams fixed); the instance-index source honoured on every draw (the coloured wedges; shown in 4 replays, not rerun live in the desert); draws held to the end of the scene (`RECOMP_DEFER_DRAWS=1`; one unexplained 82 s freeze in test111) ([picture-faults.md](picture-faults.md), [codex-render-investigation-2026-11-21.md](codex-render-investigation-2026-11-21.md)) | single run (replays) |
+| Missing party in the ruins | **open**: the player confirmed the missing figures are the party; Lutina's origin sits ~35 units behind the eye in that capture. No camera or placement change made; no route to the ruins found ([codex-render-investigation-2026-11-21.md](codex-render-investigation-2026-11-21.md)) | open |
+| English text | **our own overlay on the Japanese game** (`REPATCH = "off"`, user decision 2026-11-18 evening; the earlier rePatch row is history). Built from text sheet v7 (installed 2026-11-20) in the Glenth font, layered from `lang/en`; English is the default language (`lang/default.txt`). Dialogue reflowed and speaker names centred 2026-11-21; the layout check passes for 9,577 messages. Some cells still hold Japanese or placeholders ([localization-notes.md](localization-notes.md), [codex-english-layout-2026-11-21.md](codex-english-layout-2026-11-21.md)) | proven (in-game tests 3-12, user's play) |
+| HD (2x) English text | a pilot builder option (`--english-atlas-scale 2`); six messages tested live; not installed, the default stays 1x ([codex-hd-english-text-2026-11-22.md](codex-hd-english-text-2026-11-22.md)) | single run (pilot) |
+| HUD sharpness | replay prototypes only (re-drawn text sharpens; upscaled HUD art still soft); nothing installed ([codex-hud-sharpness-2026-11-22.md](codex-hud-sharpness-2026-11-22.md)) | untested live |
+| Arabic text (every-project standard) | **partial**: menus, labels, descriptions, objectives, tutorials, quest banners and name plates (Arabic in about 15,580 of 25,484 messages), shaped, right-to-left, right-aligned by the `psn_rtl_*` hooks ([arabic-style.md](arabic-style.md)). About 9,900 messages, most of the dialogue and cutscene subtitles, still show English in Arabic mode. Last in-game test: Test 12 (2026-11-20) | single run per test |
+| UI textures (Japanese inside pictures) | 88 redrawn for English and Arabic (title, banners, button guide, chapter cards, 83 tutorial pictures), installed 2026-11-19; banner and button guide seen in game, chapter cards and tutorial pictures only in previews ([ui-textures-research.md](ui-textures-research.md)) | single run |
+| Movies | Japanese subtitles removed from the 8 story movies (v3 per-line masks: leftover subtitle frames 2+0+19, smears remain under the new subtitle strip); English subtitles burned in (138 cues, Glenth 28 px); the boot warning redrawn; the opening announcement subtitled with the user's wording (2026-11-21) ([movie-cleaning-v3.md](movie-cleaning-v3.md), [codex-opening-announcement-2026-11-21.md](codex-opening-announcement-2026-11-21.md)) | single run |
+| Fonts | English Glenth 18 px (subtitles 28 px), Arabic Segoe UI Bold; set in `dev/psnova/fonts.json`. **Licences unchecked** for both: check before sharing a build ([fonts.md](fonts.md)) | proven in game |
+| Keyboard keys in button prompts (every-project standard) | not started (the button guide texture is redrawn with English/Arabic labels, still pad buttons) | n/a |
+| Real-game reference pictures | **available**: the user's two walkthroughs of the real Vita game (section below); used for the colour and bridge comparisons | proven (used) |
 
 ## Real-game reference (from the user, 2026-11-18)
 
@@ -199,22 +218,33 @@ A Japanese release usually confirms with **Circle (C)** and cancels with **Cross
 
 ## Open questions and next steps
 
-1. A hand play test by the user (windowed): the first mission, loading the save, sound by ear. Names are typed by
-   SceIme with a fixed answer ("Nova", `RECOMP_IME_TEXT`); a real typing box is the fork's 340a30f (below).
-1a. Line primitives (`prim LINES`) are skipped by both renderers; find what the game draws with them (from frame
-   15,565, into a U8 target) before deciding whether they matter.
-1b. Done: the arena route (`dev/psnova/make_arena_inputs.py`: over the crates with jumps as the real player does,
-   stepping out of and back into the target area, then run-and-attack cycles) clears every tutorial quest and reaches
-   the next story scene by frame ~27,600 (take 7).
-2. Make `sceAppUtilSaveDataMount` answer "not found" for another title's save (no free PSO2 bonus) unless the user
+Reconciled 2026-11-22. In order of priority:
+
+1. **Repeatable save-based routes** for regression checks: scripted inputs from a fixed save (a copy kept in
+   `dump/saves/`) through the base, a mission and a cutscene, so fixes and slowdowns can be compared run to run.
+2. **The long-session slowdown**: reproduce it on such a route (load the Force Lv6 slot after a long session, or a
+   long scripted run), then read `session.log`'s GPU-fence, wait and metrics lines for the slow interval before
+   changing anything.
+3. 60 fps correctness: fixed-step effects and cutscene timing on longer routes (the arena and base routes only so far).
+4. The missing party in the ruins: needs a route or a save just before it.
+5. Arabic: write the ~9,900 remaining messages (most dialogue and the cutscene subtitles); the squeezed enemy name by
+   the TARGET marker; the Japanese names in the mission-prep team panel; speaker-name boxes not yet seen in game.
+   Keyboard-key prompts (button guide texture and pre-rendered messages) not started.
+6. Visual review of what was only previewed: chapter cards, tutorial pictures, the magenta sky with sRGB on, the
+   desert wedges with the instance fix; the dark bands on the ground (may be the game's own shadow).
+7. Make `sceAppUtilSaveDataMount` answer "not found" for another title's save (no free PSO2 bonus) unless the user
    wants the bonus.
-3. The two shaders the translator refused: find which draws use them.
-4. Arabic: finish the RMD decode (read the atlas texture format from the renderer when a message is drawn), then draw
-   Arabic messages with our own shaping into new RMD files. Keyboard-key prompts: the button icons are in the same
-   pre-rendered messages and the UI atlases (to survey).
-5. Bring the SceCtrlData fix to the Uncharted copies (their stacks may be quietly damaged the same way); the user decides.
-6. Commit the branch when the user asks.
-7. Leads from the Uncharted session's comparison with the Luufen Nativ fork (read-only clone at `recent recomps\Nativ
+8. The two shaders the translator refused: find which draws use them (one untranslated program, 0x110ff3c0, was
+   found in none of the bad captures: claude-render-notes-2026-11-20.md).
+9. Font licences (Glenth, Segoe UI) before any build is shared.
+10. Bring the SceCtrlData fix to the Uncharted copies (their stacks may be quietly damaged the same way); the user decides.
+11. Paused at the user's request: the Vita firmware save picker and IME; HD English text and HUD sharpness (pilots).
+
+Done since 2026-11-19: hand play by the user; line primitives drawn; save loading; PC name entry; the arena route
+(`dev/psnova/make_arena_inputs.py`, take 7); the RMD decode and Arabic/English overlays; the branch committed
+(2026-11-22, eight commits after 3e5328a; `AGENTS.md` and `Glenth/` left uncommitted on purpose).
+
+Leads from the Uncharted session's comparison with the Luufen Nativ fork (read-only clone at `recent recomps\Nativ
    Luufen fork`; `Uncharted Golden Abyss Recomp RT\docs\fork-benefit-check.md`, Nova section): taken -- dfc075d (NEON
    post-increment). Not yet, test one at a time: 1deb30f GPU views for any U8U8U8U8 order (~5 target downloads a frame,
    ~12 ms of 51 ms; confirm with `RECOMP_GPU_TRACE_SYNC=1`), 340a30f/ad8dd3d IME text card, SOP2 blend ops on the GPU,
