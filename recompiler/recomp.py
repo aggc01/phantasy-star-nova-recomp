@@ -226,6 +226,10 @@ class Fn:
         elif mn in ("mla", "mls"):
             e = f"{self.r(ops[3].reg, i)} {'+' if mn == 'mla' else '-'} {self.r(ops[1].reg, i)} * {self.r(ops[2].reg, i)}"
             out = [f"{self.dst(ops[0].reg)} = {e};"]
+        elif mn == "smmul":
+            # Done by Codex. The firmware font rasterizer uses the high word of a signed product.
+            a, b = self.r(ops[1].reg, i), self.r(ops[2].reg, i)
+            out = [f"{self.dst(ops[0].reg)} = (uint32_t)((uint64_t)((int64_t)(int32_t){a} * (int32_t){b}) >> 32);"]
         elif mn in ("umull", "smull", "umlal", "smlal"):
             lo, hi, a, b = (self.dst(ops[k].reg) for k in range(2)), None, self.r(ops[2].reg, i), self.r(ops[3].reg, i)
             lo, hi = self.dst(ops[0].reg), self.dst(ops[1].reg)
@@ -596,6 +600,21 @@ class Fn:
             (dn, cnt), (an, _), (bn, _) = dbytes(regs[0]), dbytes(regs[1]), dbytes(regs[2])
             op = "+" if mn == "vadd" else "-"
             return ["{ " + " ".join(f"uint64_t t{k} = c->vfp.d[{an + k}] {op} c->vfp.d[{bn + k}];" for k in range(cnt)) + " " + " ".join(f"c->vfp.d[{dn + k}] = t{k};" for k in range(cnt)) + " }"]
+        if (mn == "vshl" and dt in ("s64", "u64") and len(ops) == 3
+                and all(r and r[0] == regs[0][0] for r in regs)):
+            # Done by Codex. Variable shifts use the signed low byte of each
+            # shift lane. Read both inputs before writing an aliased vector.
+            (dest, count), (src, _), (shift, _) = map(dbytes, regs)
+            right = ("(uint64_t)((int64_t)values[lane] >> (amount < -63 ? 63 : -amount))"
+                     if dt == "s64" else "(amount < -63 ? 0 : values[lane] >> -amount)")
+            return [f"{{ uint64_t values[{count}], shifts[{count}], out[{count}];"
+                    f" memcpy(values, &c->vfp.d[{src}], {count * 8});"
+                    f" memcpy(shifts, &c->vfp.d[{shift}], {count * 8});"
+                    f" for (int lane = 0; lane < {count}; lane++) {{"
+                    f" int amount = (int8_t)shifts[lane];"
+                    f" if (amount < 0) out[lane] = {right};"
+                    f" else out[lane] = amount < 64 ? values[lane] << amount : 0;"
+                    f" }} memcpy(&c->vfp.d[{dest}], out, {count * 8}); }}"]
         if mn == "vmovn" and dt in ("i16", "i32") and regs[0][0] == "d" and regs[1][0] == "q":
             es = int(dt[1:]) // 8   # source element size; the result keeps its low half
             ty, oty = ("uint16_t", "uint8_t") if es == 2 else ("uint32_t", "uint16_t")
@@ -633,12 +652,39 @@ class Fn:
             q0, d = 2 * regs[0][1], regs[1][1]
             return [f"{{ {ty} a[{8 // es}]; {oty} o[{8 // es}]; memcpy(a, &c->vfp.d[{d}], 8); for (int k = 0; k < {8 // es}; k++) o[k] = ({oty})a[k];"
                     f" memcpy(&c->vfp.d[{q0}], o, 16); }}"]
-        if mn == "vmull" and dt in ("u8", "s8", "u16", "s16", "u32", "s32") and regs[0][0] == "q" and regs[1][0] == "d" and regs[2][0] == "d":
+        if (mn == "vshll" and dt in ("u8", "s8", "i8", "u16", "s16", "i16", "u32", "s32", "i32")
+                and len(ops) == 3 and ops[2].type == ARM_OP_IMM
+                and regs[0][0] == "q" and regs[1][0] == "d"):
+            # Done by Codex. PAF widens each lane before shifting. Stage the
+            # input lanes first because the destination can alias the source.
+            bits, shift = int(dt[1:]), ops[2].imm
+            lanes = 64 // bits
+            src_type = f"{'int' if dt[0] == 's' else 'uint'}{bits}_t"
+            dst_type = f"uint{2 * bits}_t"
+            dest, src = 2 * regs[0][1], regs[1][1]
+            return [f"{{ {src_type} in[{lanes}]; {dst_type} out[{lanes}];"
+                    f" memcpy(in, &c->vfp.d[{src}], 8);"
+                    f" for (int lane = 0; lane < {lanes}; lane++)"
+                    f" out[lane] = ({dst_type})((uint64_t)({dst_type})in[lane] << {shift});"
+                    f" memcpy(&c->vfp.d[{dest}], out, 16); }}"]
+        if (mn in ("vmull", "vmlal", "vmlsl") and dt in ("u8", "s8", "u16", "s16", "u32", "s32")
+                and len(regs) == 3 and all(regs) and tuple(r[0] for r in regs) == ("q", "d", "d")):
             # widening multiply: each element of dN times dM into twice the width (Killzone's blend/skinning code)
             es = int(dt[1:]) // 8
             ty, oty = {("u", 1): ("uint8_t", "uint16_t"), ("s", 1): ("int8_t", "int16_t"), ("u", 2): ("uint16_t", "uint32_t"),
                        ("s", 2): ("int16_t", "int32_t"), ("u", 4): ("uint32_t", "uint64_t"), ("s", 4): ("int32_t", "int64_t")}[(dt[0], es)]
             q0, a, b = 2 * regs[0][1], regs[1][1], regs[2][1]
+            if mn != "vmull":
+                # Done by Codex. Widening accumulation wraps to the result lane width.
+                lanes = 8 // es
+                accum_type = f"uint{es * 16}_t"
+                sign = "+=" if mn == "vmlal" else "-="
+                return [f"{{ {ty} x[{lanes}], y[{lanes}]; {accum_type} o[{lanes}];"
+                        f" memcpy(x, &c->vfp.d[{a}], 8); memcpy(y, &c->vfp.d[{b}], 8);"
+                        f" memcpy(o, &c->vfp.d[{q0}], 16);"
+                        f" for (int k = 0; k < {lanes}; k++)"
+                        f" o[k] {sign} ({accum_type})((uint64_t)({accum_type})x[k] * ({accum_type})y[k]);"
+                        f" memcpy(&c->vfp.d[{q0}], o, 16); }}"]
             return [f"{{ {ty} x[{8 // es}], y[{8 // es}]; {oty} o[{8 // es}]; memcpy(x, &c->vfp.d[{a}], 8); memcpy(y, &c->vfp.d[{b}], 8);"
                     f" for (int k = 0; k < {8 // es}; k++) o[k] = ({oty})x[k] * ({oty})y[k]; memcpy(&c->vfp.d[{q0}], o, 16); }}"]
         if mn == "vshrn" and dt in ("i16", "i32", "i64") and regs[0][0] == "d" and regs[1][0] == "q" and len(ops) == 3 and ops[2].type == ARM_OP_IMM:
@@ -659,6 +705,37 @@ class Fn:
             n = 8 * cnt // es
             return [f"{{ {ty} a[16]; {oty} o[8]; memcpy(a, &c->vfp.d[{an}], {8 * cnt}); for (int k = 0; k < {n // 2}; k++) o[k] = ({oty})a[2 * k] + ({oty})a[2 * k + 1];"
                     f" memcpy(&c->vfp.d[{dn}], o, {8 * cnt}); }}"]
+        if (mn == "vpadal" and dt in ("u8", "u16", "u32", "s8", "s16", "s32")
+                and len(regs) == 2 and regs[1] and regs[0][0] == regs[1][0]):
+            # Done by Codex. Add adjacent widened lanes to the existing wide accumulator.
+            (dest, count), (src, _) = map(dbytes, regs)
+            bits = int(dt[1:])
+            lanes = count * 64 // bits
+            src_type = f"{'int' if dt[0] == 's' else 'uint'}{bits}_t"
+            dest_type = f"uint{2 * bits}_t"
+            return [f"{{ {src_type} in[{lanes}]; {dest_type} out[{lanes // 2}];"
+                    f" memcpy(in, &c->vfp.d[{src}], {count * 8});"
+                    f" memcpy(out, &c->vfp.d[{dest}], {count * 8});"
+                    f" for (int lane = 0; lane < {lanes // 2}; lane++)"
+                    f" out[lane] += ({dest_type})((int64_t)in[2 * lane] + in[2 * lane + 1]);"
+                    f" memcpy(&c->vfp.d[{dest}], out, {count * 8}); }}"]
+        if (mn in ("vabd", "vabdl") and dt in ("s8", "s16", "s32", "u8", "u16", "u32")
+                and len(regs) == 3 and all(reg and reg[0] in ("d", "q") for reg in regs)):
+            # Done by Codex. PAF's PNG filter compares absolute byte differences in wide lanes.
+            (dest, out_count), (left, in_count), (right, right_count) = map(dbytes, regs)
+            widen = 2 if mn == "vabdl" else 1
+            if out_count == in_count * widen and in_count == right_count:
+                bits = int(dt[1:])
+                lanes = in_count * 64 // bits
+                src_type = f"{'int' if dt[0] == 's' else 'uint'}{bits}_t"
+                dest_type = f"uint{bits * widen}_t"
+                return [f"{{ {src_type} left[{lanes}], right[{lanes}]; {dest_type} out[{lanes}];"
+                        f" memcpy(left, &c->vfp.d[{left}], {in_count * 8});"
+                        f" memcpy(right, &c->vfp.d[{right}], {in_count * 8});"
+                        f" for (int lane = 0; lane < {lanes}; lane++) {{"
+                        f" int64_t diff = (int64_t)left[lane] - right[lane];"
+                        f" out[lane] = ({dest_type})(diff < 0 ? -diff : diff); }}"
+                        f" memcpy(&c->vfp.d[{dest}], out, {out_count * 8}); }}"]
         # half precision, 4 lanes: vcvt.f32.f16 qD, dM / vcvt.f16.f32 dD, qM
         if mn == "vcvt" and i.mnemonic.endswith((".f32.f16", ".f16.f32")) and len(regs) == 2:
             if i.mnemonic.endswith(".f32.f16") and regs[0][0] == "q":
@@ -952,8 +1029,9 @@ class Fn:
                 out.append(f" c->r[{base}] {'-' if before else '+'}= {tot};")
             out.append(" }")
             return ["".join(out)]
-        if mn == "vmov" and len(ops) == 2 and regs[0] and regs[0][0] in "dq" and ops[1].type == ARM_OP_IMM:
-            # vmov.i32/i16/i8/i64 dN|qN, #imm: the immediate replicated into every lane
+        if ((mn == "vmov" or (mn in ("vorr", "vbic", "vmvn") and dt in ("i16", "i32")))
+                and len(ops) == 2 and regs[0] and regs[0][0] in "dq" and ops[1].type == ARM_OP_IMM):
+            # Done by Codex. The immediate is replicated for logical operations too.
             bits = int(dt[1:]) if dt[1:].isdigit() else 32
             if bits < 64:
                 lane = ops[1].imm & ((1 << bits) - 1)
@@ -964,7 +1042,8 @@ class Fn:
             for k in range(64 // bits):
                 rep64 |= lane << (k * bits)
             nd = [2 * regs[0][1], 2 * regs[0][1] + 1] if regs[0][0] == "q" else [regs[0][1]]
-            return [" ".join(f"c->vfp.d[{x}] = 0x{rep64:x}ull;" for x in nd)]
+            update = {"vmov": "=", "vorr": "|=", "vbic": "&= ~", "vmvn": "= ~"}[mn]
+            return [" ".join(f"c->vfp.d[{x}] {update} 0x{rep64:x}ull;" for x in nd)]
         if mn == "vmov" and len(ops) == 2 and regs[0] and regs[0][0] == "d" and regs[1] and regs[1][0] == "r":
             # vmov.32 dN[x], rT (capstone gives the lane in the operand's vector_index)
             lane = ops[0].vector_index if ops[0].vector_index >= 0 else 0
@@ -1309,7 +1388,13 @@ def main():
         for i in f.insns:
             if i.mnemonic == mnem and i.operands and i.operands[0].type == ARM_OP_IMM:
                 yield i.operands[0].imm & 0xffffffff
-    todo = [t for f in fns for t in calls(f, "blx") if t in by_entry]
+    # (blx targets from the Thumb decode of functions that are Thumb: an ARM function's bytes read as Thumb hold made-up
+    # "blx" -- Phantasy Star Nova's ARM fn_81ad94c8, read as Thumb, had "blx #0x8213e768" in the middle of a vorr, and
+    # made the Thumb function at 0x8213e768 ARM: its first instruction became UNIMPL, 2026-11-19 evening,
+    # docs/psnova/external-fix-list-check.md)
+    # (nor from functions the junk test below makes ARM: their Thumb decode is just as made up)
+    arm_an = set(d.get("arm", []))
+    todo = [t for f in fns if f.entry not in arm_an and not junk(f.insns) for t in calls(f, "blx") if t in by_entry]
     todo += [a for a in d.get("arm", []) if a in by_entry]   # the analysis decoded these as ARM (its exports and calls say so)
     for f in fns:
         if junk(f.insns) and not junk(decode(fspans[f.entry], True)):

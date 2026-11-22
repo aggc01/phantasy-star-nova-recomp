@@ -318,11 +318,11 @@ class Analyser:
         return ops[-1].imm & 0xffffffff if ops and ops[-1].type == ARM_OP_IMM else None   # capstone's are signed
 
     def guard_entries(self, i, prev):
-        """a Thumb tbb/tbh table's entry count from the bounds check guarding it, as compilers lay it
+        """a Thumb jump table's entry count from the bounds check guarding it, as compilers lay it
         out: the index register is the switch value minus constants (subs chain), checked against
         a bound -- an immediate, or a register a movw/mov loaded -- by a cmp, then a branch away on
         greater/higher. None when the shape isn't that."""
-        mem = i.operands[0].mem if i.operands and i.operands[0].type == ARM_OP_MEM else None
+        mem = i.operands[-1].mem if i.operands and i.operands[-1].type == ARM_OP_MEM else None
         if mem is None or not mem.index:
             return None
         cur, off, k = mem.index, 0, len(prev) - 1
@@ -438,6 +438,38 @@ class Analyser:
             targets.append(v)
         return targets, (base, base + 4 * len(targets))
 
+    def thumb_ldr_pc_table(self, insn, prev):
+        """Done by Codex. Bounded Thumb switch via ADR and LDR pc, [Rn, Rm, LSL #2]."""
+        if not prev or len(insn.operands) != 2 or insn.operands[1].type != ARM_OP_MEM:
+            return None
+        operand = insn.operands[1]
+        mem = operand.mem
+        if not mem.index or mem.index == mem.base or mem.disp or operand.shift.type != A.ARM_SFT_LSL or operand.shift.value != 2:
+            return None
+        load = prev[-1]
+        ops = load.operands
+        if not ops or ops[0].type != ARM_OP_REG or ops[0].reg != mem.base:
+            return None
+        if load.id == A.ARM_INS_ADR and len(ops) == 2 and ops[1].type == ARM_OP_IMM:
+            offset = ops[1].imm
+        elif (load.mnemonic == "addw" and len(ops) == 3 and ops[1].type == ARM_OP_REG
+              and ops[1].reg == ARM_REG_PC and ops[2].type == ARM_OP_IMM):
+            offset = ops[2].imm
+        else:
+            return None
+        count = self.guard_entries(insn, prev[:-1])
+        base = ((load.address + 4) & ~3) + offset
+        if not count or base < insn.address + insn.size:
+            return None
+        targets = []
+        end = base + 4 * count
+        for address in range(base, end, 4):
+            value = self.word(address)
+            if value is None or not value & 1 or base <= (value & ~1) < end or self.insn(value & ~1, False) is None:
+                return None
+            targets.append(value & ~1)
+        return targets, (base, end)
+
     def function(self, entry, arm, entries):
         """the instructions reachable in a function: (instruction addresses with sizes, calls, ARM calls, ok)"""
         seen, calls, todo, ranges, pointers = {}, set(), [entry], [], set()
@@ -483,6 +515,15 @@ class Analyser:
                     targets, (tlo, thi) = self.table_targets(i, prev, arm)
                     todo += targets
                     ranges.append((tlo, thi))
+                    if not self.cond(i):
+                        break
+                elif not arm and op == A.ARM_INS_LDR and writes_pc:
+                    table = self.thumb_ldr_pc_table(i, prev)
+                    if table:
+                        targets, bounds = table
+                        todo += targets
+                        ranges.append(bounds)
+                        self.jumps.update(targets)
                     if not self.cond(i):
                         break
                 elif arm and op == A.ARM_INS_ADD and len(ops) == 3 and ops[0].type == ARM_OP_REG and ops[0].reg == ARM_REG_PC \

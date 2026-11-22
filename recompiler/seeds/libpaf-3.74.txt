@@ -1,0 +1,8 @@
+# Done by Codex. Use with Vita 3.74 only. PAF installs these ARM image transforms via MOVW/MOVT.
+0x1b980c arm
+0x1b9838 arm
+0x1b988c arm
+0x1b98ac arm
+0x1b98ec arm
+0x1b9964 arm
+0x1b9a6c arm

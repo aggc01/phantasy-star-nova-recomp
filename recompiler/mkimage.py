@@ -16,7 +16,7 @@ A module loaded with the program (mkimage.py ... --module) also gets "EXPT", u32
 "MSTA", u32 module_start (run before the program's). The program's image has "PPRM", u32 address
 of its process parameters (sceKernelGetProcessParam).
 
-usage: mkimage.py <export.data.json> <out.img> [module ELF] [--module]
+usage: mkimage.py <export.data.json> <out.img> [module ELF] [--module] [--defer-start=NAME]
 """
 import json, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -26,8 +26,12 @@ VAR_BASE, VAR_SLOT = 0xfff00000, 0x1000
 
 
 def main():
+    # Done by Codex. Argument-bearing firmware modules start on a guest load request.
+    deferred = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--defer-start=")), None)
     is_module = "--module" in sys.argv
-    sys.argv = [a for a in sys.argv if a != "--module"]
+    sys.argv = [a for a in sys.argv if a != "--module" and not a.startswith("--defer-start=")]
+    if deferred is not None and (not is_module or not deferred.isascii() or not deferred.isidentifier() or len(deferred) > 40):
+        sys.exit("--defer-start requires --module and a module identifier of up to 40 ASCII characters")
     if len(sys.argv) not in (3, 4):
         sys.exit(__doc__)
     d = json.load(open(sys.argv[1]))
@@ -64,12 +68,20 @@ def main():
         if is_module and "exports" in d:
             names = known_names()
             ex = [(a, names.get((lib, nid), f"{lib}_{nid:08X}")) for lib, nid, a, var in d["exports"] if not var and lib]
-            f.write(b"EXPT" + struct.pack("<I", len(ex)))
-            for a, n in ex:
-                f.write(struct.pack("<I", a) + n.encode()[:59].ljust(60, b"\0"))
             start = d["functions"].get("module_start")
             if start is not None:
                 start = next((a for lib, nid, a, var in d["exports"] if nid == 0x935CD196), start)
+            if deferred is not None:
+                if not start:
+                    sys.exit(f"{deferred} has no module_start")
+                ex.append((start, f"__recomp_start_{deferred}"))
+                stop = next((a for lib, nid, a, var in d["exports"] if not lib and not var and nid == 0x79F8E492), None)
+                if stop:
+                    ex.append((stop, f"__recomp_stop_{deferred}"))
+            f.write(b"EXPT" + struct.pack("<I", len(ex)))
+            for a, n in ex:
+                f.write(struct.pack("<I", a) + n.encode()[:59].ljust(60, b"\0"))
+            if start is not None and deferred is None:
                 f.write(b"MSTA" + struct.pack("<I", start))
             print(f"EXPT {len(ex)} exported functions; module_start {start:#x}" if start else f"EXPT {len(ex)} exported functions")
 
