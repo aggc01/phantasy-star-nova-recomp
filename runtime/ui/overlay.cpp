@@ -48,6 +48,9 @@
 #include "gpulock.h"   /* the SDL submit below is the locked one, and ImGui's own submits run under the same lock (render_frame): Homebrew SDL 3.4.16's Metal fence race, see that header */
 #include "overlay.h"
 #include "savedlg.h"
+#include "ime.h"          /* Done by Codex */
+#include "nova_save_display.h"   /* Done by Codex */
+#include "save_backups.h"   /* the Saves page's file work (save_backups.c) */
 #include "ui_theme.h"
 #define STBI_NO_STDIO
 #include "third_party/stb/stb_image.h"   /* (its implementation: runtime/media/jpeg.c) */
@@ -73,6 +76,7 @@ int window_get_fullscreen(void); void window_set_fullscreen(int on);
 int window_raw_look(void); void window_set_raw_look(int on);
 int window_controls_count(void);
 int window_gyro_present(void);
+int window_gamepad_connected(void);   /* Done by Codex */
 void motion_recenter(void);
 void window_controls_row(int i, const char **action, const char **key, const char **pad);
 /* gfx_gpu.c: the GPU backend's internal resolution (1-gfx_gpu_render_scale_max) and F2's own cycle */
@@ -104,6 +108,74 @@ void settings_save(void);
 
 static ImGuiContext *g_ctx;
 static bool g_has_window;      /* overlay_init was given a real SDL_Window: the platform backend is live */
+static std::atomic<bool> g_ime_available;   /* Done by Codex: visible to the guest thread */
+extern "C" int overlay_ime_available(void) { return g_ime_available; }
+static SDL_GPUDevice *g_save_gpu;
+static SDL_GPUTexture *g_save_icon;
+static bool nova_title(void) {
+	const char *title = std::getenv("RECOMP_TITLE");
+	return title && !std::strcmp(title, "PCSG00351");
+}
+
+/* Done by Codex. The firmware picker receives its own display copy of the slot. */
+extern "C" void nova_save_translate_fields(char *subtitle, size_t subtitle_size,
+                                           char *detail, size_t detail_size) {
+	if (!nova_title() || !nova_save_english()) return;
+	if (std::memchr(subtitle, 0, subtitle_size)) {
+		const std::string translated = nova_save_subtitle(subtitle, true);
+		if (translated.size() < subtitle_size)
+			std::memcpy(subtitle, translated.c_str(), translated.size() + 1);
+	}
+	if (std::memchr(detail, 0, detail_size)) {
+		const std::string translated = nova_save_detail(detail, true);
+		if (translated.size() < detail_size)
+			std::memcpy(detail, translated.c_str(), translated.size() + 1);
+	}
+}
+
+/* Done by Codex. Nova's slot records reference the same app0 save icon. */
+static SDL_GPUTexture *load_nova_save_icon(SDL_GPUDevice *device) {
+	const char *root = std::getenv("RECOMP_FS");
+	const std::string path = std::string(root ? root : "fs") + "/app0/saveicon.png";
+	SDL_Surface *image = SDL_LoadPNG(path.c_str());
+	if (!image) return nullptr;
+	SDL_Surface *rgba = SDL_ConvertSurface(image, SDL_PIXELFORMAT_ABGR8888);
+	SDL_DestroySurface(image);
+	if (!rgba) return nullptr;
+	const Uint32 w = rgba->w, h = rgba->h;
+	SDL_GPUTextureCreateInfo ci = {};
+	ci.type = SDL_GPU_TEXTURETYPE_2D;
+	ci.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+	ci.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+	ci.width = w; ci.height = h; ci.layer_count_or_depth = ci.num_levels = 1;
+	SDL_GPUTexture *icon = SDL_CreateGPUTexture(device, &ci);
+	SDL_GPUTransferBufferCreateInfo ti = {};
+	ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+	ti.size = w * h * 4;
+	SDL_GPUTransferBuffer *buffer = SDL_CreateGPUTransferBuffer(device, &ti);
+	bool uploaded = false;
+	if (icon && buffer) {
+		if (auto *pixels = static_cast<unsigned char *>(SDL_MapGPUTransferBuffer(device, buffer, false))) {
+			for (Uint32 y = 0; y < h; ++y)
+				std::memcpy(pixels + y * w * 4, static_cast<unsigned char *>(rgba->pixels) + y * rgba->pitch, w * 4);
+			SDL_UnmapGPUTransferBuffer(device, buffer);
+			if (SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device)) {
+				SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+				SDL_GPUTextureTransferInfo src = {};
+				src.transfer_buffer = buffer; src.pixels_per_row = w; src.rows_per_layer = h;
+				SDL_GPUTextureRegion dst = {};
+				dst.texture = icon; dst.w = w; dst.h = h; dst.d = 1;
+				SDL_UploadToGPUTexture(copy, &src, &dst, false);
+				SDL_EndGPUCopyPass(copy);
+				uploaded = SDL_SubmitGPUCommandBuffer(cmd);
+			}
+		}
+	}
+	if (buffer) SDL_ReleaseGPUTransferBuffer(device, buffer);
+	SDL_DestroySurface(rgba);
+	if (!uploaded && icon) SDL_ReleaseGPUTexture(device, icon);
+	return uploaded ? icon : nullptr;
+}
 /* written by the window thread, read by the game thread (display.c's pause, window.c's audio): atomic,
  * like every other flag that crosses those threads (rscale_req, osd_level_v). g_paused: Game > Pause
  * in the menu bar -- the game held (display.c, as for the menu) with nothing but a banner on screen */
@@ -138,9 +210,17 @@ int overlay_init(SDL_GPUDevice *device, SDL_Window *window, SDL_GPUTextureFormat
 		ImGui::DestroyContext(g_ctx); g_ctx = nullptr;
 		return 0;
 	}
+	g_ime_available = g_has_window;
+	if (g_has_window && nova_title()) {
+		g_save_gpu = device;
+		g_save_icon = load_nova_save_icon(device);
+	}
 	return 1;
 }
 void overlay_shutdown(void) {
+	g_ime_available = false;
+	if (g_save_icon) SDL_ReleaseGPUTexture(g_save_gpu, g_save_icon);
+	g_save_icon = nullptr;
 	if (!g_ctx) return;
 	ImGui::SetCurrentContext(g_ctx);
 	ImGui_ImplSDLGPU3_Shutdown();
@@ -350,11 +430,57 @@ static void page_performance(void) {
 	{ char b[32]; std::snprintf(b, sizeof b, "%.0f fps", metrics_fps()); ImGui::PushFont(nullptr, ImGui::GetFontSize() * 1.6f); ImGui::TextUnformatted(b); ImGui::PopFont(); }
 	ui::rows_end();
 }
+/* the language overlays in <RECOMP_FS>/lang/<code>/ (io.c host_lang): their codes and names (the first line of each
+ * folder's language.txt, else the code), scanned once; none = no Language row */
+#include <dirent.h>
+#include <sys/stat.h>
+#define LANG_MAX 16
+extern "C" const char *host_lang(void);   /* io.c: the language this session started with (the setting, else lang/default.txt) */
+static int g_nlang = -1; static char g_lang_code[LANG_MAX][32], g_lang_name[LANG_MAX][64];
+static void langs_scan(void) {
+	if (g_nlang >= 0) return;
+	g_nlang = 0;
+	char d[1024]; std::snprintf(d, sizeof d, "%s/lang", std::getenv("RECOMP_FS") ? std::getenv("RECOMP_FS") : "fs");
+	DIR *dir = opendir(d); if (!dir) return;
+	struct dirent *e;
+	while ((e = readdir(dir)) && g_nlang < LANG_MAX) {
+		if (e->d_name[0] == '.' || std::strlen(e->d_name) >= sizeof g_lang_code[0]) continue;
+		char p[1200]; struct stat st; std::snprintf(p, sizeof p, "%s/%s", d, e->d_name);
+		if (stat(p, &st) || !S_ISDIR(st.st_mode)) continue;
+		std::snprintf(g_lang_code[g_nlang], sizeof g_lang_code[0], "%s", e->d_name);
+		std::snprintf(g_lang_name[g_nlang], sizeof g_lang_name[0], "%s", e->d_name);
+		std::snprintf(p, sizeof p, "%s/%s/language.txt", d, e->d_name);
+		if (FILE *f = std::fopen(p, "rb")) {
+			char line[64] = {0};
+			if (std::fgets(line, sizeof line, f)) { char *q = line; if (!std::strncmp(q, "\xEF\xBB\xBF", 3)) q += 3; q[std::strcspn(q, "\r\n")] = 0; if (*q) std::snprintf(g_lang_name[g_nlang], sizeof g_lang_name[0], "%s", q); }
+			std::fclose(f);
+		}
+		g_nlang++;
+	}
+	closedir(dir);
+	for (int i = 1; i < g_nlang; i++)   /* by code: a stable order whatever the folder listing's (insertion sort; a few entries) */
+		for (int j = i; j > 0 && std::strcmp(g_lang_code[j - 1], g_lang_code[j]) > 0; j--) {
+			char c[32], n[64];
+			std::memcpy(c, g_lang_code[j], sizeof c); std::memcpy(g_lang_code[j], g_lang_code[j - 1], sizeof c); std::memcpy(g_lang_code[j - 1], c, sizeof c);
+			std::memcpy(n, g_lang_name[j], sizeof n); std::memcpy(g_lang_name[j], g_lang_name[j - 1], sizeof n); std::memcpy(g_lang_name[j - 1], n, sizeof n);
+		}
+}
 static void page_game(void) {
 	prefs_load();
 	if (!ui::rows_begin("game")) return;
 	ui::row("Frame rate", "60 is experimental: parts of a game timed in fixed 1/30 s steps can run fast.");
 	{ static const char *const names[2] = {"30##fr", "60##fr"}; int v = P.fr >= 60; if (ui::segmented(names, 2, &v)) set_frame_rate(v ? 60 : 30); }
+	langs_scan();
+	if (g_nlang > 0) {   /* the game's text (and movies) in another language: a file overlay picked at start (io.c host_lang) */
+		ui::row("Language", "The game's text and movies. Original is the game as released. Applies the next time the game starts.");
+		static char labels[LANG_MAX + 1][80]; static const char *names[LANG_MAX + 1];
+		std::snprintf(labels[0], sizeof labels[0], "Original##lang"); names[0] = labels[0];
+		for (int i = 0; i < g_nlang; i++) { std::snprintf(labels[i + 1], sizeof labels[0], "%s##lang%d", g_lang_name[i], i); names[i + 1] = labels[i + 1]; }
+		char cur[32]; settings_str("language", "?", cur, sizeof cur);
+		if (!std::strcmp(cur, "?")) std::snprintf(cur, sizeof cur, "%s", host_lang());   /* not chosen yet: show the default in use */
+		int v = 0; for (int i = 0; i < g_nlang; i++) if (!std::strcmp(cur, g_lang_code[i])) v = i + 1;
+		if (ui::segmented(names, g_nlang + 1, &v)) { settings_set_str("language", v ? g_lang_code[v - 1] : "original"); settings_save(); }
+	}
 	if (game_option("fov")) {
 		ui::row("Field of view", "A wider view. 1.00× is the game's own.");
 		ImGui::SetNextItemWidth(-FLT_MIN); if (ImGui::SliderFloat("##fov", &P.fov, 0.75f, 1.5f, "%.2f×")) set_fov(P.fov);
@@ -514,12 +640,94 @@ static void page_help(void) {
 	ui::muted_wrapped("The menu bar: move the mouse to the top edge of the window (or tap the tab there). This menu: F10, or the PS button; the game pauses while it's up.");
 }
 
+/* ---- the Saves page (save_backups.c has the why): copies of the game's own save, kept outside the game, to get back to
+ * a place. Back up after the game saves; Restore puts a copy in place of the save (the one it replaces backed up first),
+ * and the game plays it once it loads it. Restore and Delete ask first. Rescanned each time the page is opened. */
+#define BACKUP_MAX 64
+static SaveBackup g_bk[BACKUP_MAX], g_bk_cur;
+static int g_nbk = -1, g_bk_have;             /* g_nbk -1: scan on the page's next frame */
+static char g_bk_msg[512]; static bool g_bk_err;
+static char g_bk_label[48];
+static int g_bk_ask = -1, g_bk_ask_op;         /* the backup a Restore (op 1) or Delete (op 2) waits to confirm */
+static void backups_rescan(void) { g_bk_have = save_backups_current(&g_bk_cur); g_nbk = save_backups_list(g_bk, BACKUP_MAX); }
+static void save_words(const SaveBackup &b) {   /* the game's own words for a save (its slot's subtitle and detail), and when it saved */
+	const bool en = nova_title() && nova_save_english();   /* Done by Codex */
+	const auto subtitle = nova_save_subtitle(b.subtitle, en);
+	ImGui::TextUnformatted(!subtitle.empty() ? subtitle.c_str() : b.title[0] ? b.title : "(the game gave no description)");
+	char t[400]; t[0] = 0;
+	if (b.detail[0]) std::snprintf(t, sizeof t, "%s", nova_save_detail(b.detail, en).c_str());
+	if (b.year) { size_t k = std::strlen(t); std::snprintf(t + k, sizeof t - k, "%ssaved %04d-%02d-%02d %02d:%02d", k ? "  ·  " : "", b.year, b.month, b.day, b.hour, b.minute); }
+	if (t[0]) { ImGui::PushStyleColor(ImGuiCol_Text, ui::muted); ImGui::TextWrapped("%s", t); ImGui::PopStyleColor(); }
+}
+static void page_saves(void) {
+	const float em = ImGui::GetFontSize();
+	{ static int last = -10; const int f = ImGui::GetFrameCount(); if (f != last + 1) g_nbk = -1; last = f; }   /* not drawn last frame (the page or the menu just opened): scan again */
+	if (g_nbk < 0) backups_rescan();
+	ui::muted_wrapped("Copies of the game's own save, kept outside the game. Back one up after the game saves, and restore it to get back to that "
+	                  "point: then load it in the game (the title screen's Continue -- restart the game first if you're playing). The game only "
+	                  "saves at its own save points. A restore backs up the save it replaces first.");
+	section_label("The game's save now");
+	if (ui::rows_begin("savenow")) {
+		ui::row("Current save");
+		if (g_bk_have) save_words(g_bk_cur); else ImGui::TextDisabled("No save yet");
+		ui::row("New backup", "A name helps you find it later (letters, digits, spaces), e.g. after the arena. Optional.");
+		ImGui::SetNextItemWidth(em * 12); ImGui::InputTextWithHint("##bklabel", "name (optional)", g_bk_label, sizeof g_bk_label);
+		ImGui::SameLine();
+		ImGui::BeginDisabled(!g_bk_have);
+		if (ui::primary_button("Back up")) { g_bk_err = save_backups_create(g_bk_label, g_bk_msg, sizeof g_bk_msg) != 0; if (!g_bk_err) g_bk_label[0] = 0; backups_rescan(); }
+		ImGui::EndDisabled();
+		ui::rows_end();
+	}
+	section_label("Backups");
+	if (g_nbk == 0) ImGui::TextDisabled("None yet");
+	else if (ImGui::BeginTable("backups", 3, ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+		ImGui::TableSetupColumn("Backup", ImGuiTableColumnFlags_WidthStretch, 1.0f); ImGui::TableSetupColumn("The game's save", ImGuiTableColumnFlags_WidthStretch, 1.3f);
+		ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed);
+		ImGui::PushStyleColor(ImGuiCol_Text, ui::muted); ImGui::TableHeadersRow(); ImGui::PopStyleColor();
+		for (int i = 0; i < g_nbk; i++) {
+			ImGui::PushID(i);
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn(); ImGui::TextWrapped("%s", g_bk[i].name);
+			ImGui::TableNextColumn(); save_words(g_bk[i]);
+			ImGui::TableNextColumn();
+			if (ImGui::Button("Restore")) { g_bk_ask = i; g_bk_ask_op = 1; }
+			ImGui::SameLine(); ImGui::PushStyleColor(ImGuiCol_Text, ui::error); if (ImGui::Button("Delete")) { g_bk_ask = i; g_bk_ask_op = 2; } ImGui::PopStyleColor();
+			ImGui::PopID();
+		}
+		ImGui::EndTable();
+	}
+	if (g_bk_msg[0]) { ImGui::Dummy(ImVec2(0, em * 0.3f)); ImGui::PushStyleColor(ImGuiCol_Text, g_bk_err ? ui::error : ui::accent); ImGui::TextWrapped("%s", g_bk_msg); ImGui::PopStyleColor(); }
+	{ char d[1024]; save_backups_dir(d, sizeof d); ImGui::Dummy(ImVec2(0, em * 0.3f)); ImGui::TextDisabled("Kept in %s", d); }
+	if (g_bk_ask >= 0 && g_bk_ask < g_nbk) {   /* the confirmation, a modal over the menu */
+		if (!ImGui::IsPopupOpen("##bkask")) ImGui::OpenPopup("##bkask");
+		ImGui::SetNextWindowSize(ImVec2(em * 26, 0));
+		if (ImGui::BeginPopupModal("##bkask", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
+			const SaveBackup &b = g_bk[g_bk_ask];
+			ui::heading(g_bk_ask_op == 1 ? "Restore this backup?" : "Delete this backup?", em * 1.15f);
+			ImGui::TextWrapped("%s", b.name); save_words(b);
+			ImGui::Dummy(ImVec2(0, em * 0.3f));
+			ui::muted_wrapped(g_bk_ask_op == 1 ? "It takes the place of the game's save now, which is backed up first. Then load it in the game."
+			                                   : "This backup's files are removed. It can't be undone.");
+			ImGui::Dummy(ImVec2(0, em * 0.3f));
+			if (ui::primary_button(g_bk_ask_op == 1 ? "Restore" : "Delete")) {
+				char name[128]; std::snprintf(name, sizeof name, "%s", b.name);
+				g_bk_err = (g_bk_ask_op == 1 ? save_backups_restore(name, g_bk_msg, sizeof g_bk_msg) : save_backups_delete(name, g_bk_msg, sizeof g_bk_msg)) != 0;
+				g_bk_ask = -1; ImGui::CloseCurrentPopup(); backups_rescan();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)) { g_bk_ask = -1; ImGui::CloseCurrentPopup(); }
+			ImGui::EndPopup();
+		}
+	} else g_bk_ask = -1;
+}
+
 /* ---- the full menu (build_ui): a panel over the paused, dimmed game -- the game's name and a Paused chip, the
  * sections down the side, the page, and Resume / Capture / Quit at the foot */
-enum { TAB_DISPLAY, TAB_PERF, TAB_GAME, TAB_CONTROLS, TAB_HELP, TAB_N };
-static const char *const g_tab_names[TAB_N] = {"Display", "Performance", "Game", "Controls", "Help"};
+enum { TAB_DISPLAY, TAB_PERF, TAB_GAME, TAB_CONTROLS, TAB_HELP, TAB_SAVES, TAB_N };
+static const char *const g_tab_names[TAB_N] = {"Display", "Performance", "Game", "Controls", "Help", "Saves"};
 static const char *const g_tab_blurbs[TAB_N] = {"Resolution, picture and image quality", "Frame rate and on-screen stats",
-	"Frame rate, view and detail options, volume", "Keyboard, mouse, controller, gyro and camera", "Shortcuts and about"};
+	"Frame rate, view and detail options, volume", "Keyboard, mouse, controller, gyro and camera", "Shortcuts and about",
+	"Backups of the game's own save, to get back to a place"};
 static int g_select_tab = -1;   /* the bar asked for this page (open_page): selected on the menu's next frame, then -1 */
 static int g_section = TAB_DISPLAY;
 static void open_page(int tab) { g_select_tab = tab; overlay_open(); }
@@ -547,13 +755,13 @@ static void build_ui(void) {
 	const float foot = ImGui::GetFrameHeightWithSpacing() + em * 0.9f;
 	/* the sections; a controller's L1 / R1 (or Ctrl+Tab, Ctrl+Shift+Tab) step them in the sidebar's order -- the sidebar and
 	 * the page are separate panels the D-pad doesn't cross -- and the new page's first row takes the focus */
-	static const int order[TAB_N] = {TAB_DISPLAY, TAB_GAME, TAB_CONTROLS, TAB_PERF, TAB_HELP};
+	static const int order[TAB_N] = {TAB_DISPLAY, TAB_GAME, TAB_SAVES, TAB_CONTROLS, TAB_PERF, TAB_HELP};
 	static bool focus_page;
 	if (!ImGui::IsAnyItemActive()) {
 		const bool ctrl = io.KeyCtrl, shift = io.KeyShift; int step = 0;
 		if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || (ctrl && shift && ImGui::IsKeyPressed(ImGuiKey_Tab, false))) step = -1;
 		if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_Tab, false))) step = 1;
-		if (step) { int k = 0; while (k < TAB_N - 1 && order[k] != g_section) k++; g_section = order[(k + step + TAB_N) % TAB_N]; focus_page = true; }
+		if (step && g_bk_ask < 0) { int k = 0; while (k < TAB_N - 1 && order[k] != g_section) k++; g_section = order[(k + step + TAB_N) % TAB_N]; focus_page = true; }   /* (not under the Saves page's confirmation: it would stay in ImGui's popup stack) */
 	}
 	ImGui::BeginChild("nav", ImVec2(em * 11.5f, -foot), 0);
 	for (int k = 0; k < TAB_N; k++) {
@@ -576,9 +784,9 @@ static void build_ui(void) {
 	ImGui::PopStyleColor();
 	ui::heading(g_tab_names[g_section], em * 1.25f);
 	ImGui::TextDisabled("%s", g_tab_blurbs[g_section]);
-	if (focus_page) { ImGui::SetKeyboardFocusHere(); focus_page = false; }   /* (the page's first control) */
+	if (focus_page) { if (g_section != TAB_SAVES) ImGui::SetKeyboardFocusHere(); focus_page = false; }   /* (the page's first control; not on Saves, whose first is the name field: focused it starts text editing, which holds L1/R1) */
 	ImGui::Dummy(ImVec2(0, em * 0.2f));
-	static void (*const pages[TAB_N])(void) = {page_display, page_performance, page_game, page_controls, page_help};
+	static void (*const pages[TAB_N])(void) = {page_display, page_performance, page_game, page_controls, page_help, page_saves};
 	pages[g_section]();
 	ImGui::EndChild();
 	/* the foot */
@@ -888,6 +1096,7 @@ static void build_marks(void) {
 static int g_sd_seq = -1, g_sd_sel; static bool g_sd_armed;
 int overlay_dialog_active(void) {
 	if (!g_ctx || !g_has_window) return 0;
+	if (ime_active()) return 1;
 	SaveDlgView v; const int k = savedlg_view(&v); savedlg_release();
 	return k == SAVEDLG_LIST || k == SAVEDLG_YESNO;
 }
@@ -898,24 +1107,191 @@ static const ImGuiKey K_OK[] = {ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_S
 static const ImGuiKey K_BACK[] = {ImGuiKey_Escape, ImGuiKey_Backspace, ImGuiKey_GamepadFaceRight};
 template <size_t N> static bool keys_pressed(const ImGuiKey (&k)[N]) { for (ImGuiKey x : k) if (ImGui::IsKeyPressed(x, true)) return true; return false; }
 template <size_t N> static bool keys_down(const ImGuiKey (&k)[N]) { for (ImGuiKey x : k) if (ImGui::IsKeyDown(x)) return true; return false; }
+
+/* Done by Codex. The game keeps polling SceIme while this independent editor
+ * holds input. The window only submits an answer to the current guest request. */
+struct NameEditor {
+	unsigned seq = 0;
+	unsigned limit = 0;
+	bool open = false, pad = false, armed = false, answered = false;
+	bool upper = false, symbols = false;
+	int row = 0, col = 0;
+	char text[sizeof(ImeView::text)] = {};
+	std::string accepted;
+};
+
+static unsigned name_units(const char *text) {
+	unsigned units = 0;
+	while (*text) {
+		unsigned ch;
+		text += ImTextCharFromUtf8(&ch, text, nullptr);
+		units += ch > 0xffff ? 2 : 1;
+	}
+	return units;
+}
+
+static int name_edited(ImGuiInputTextCallbackData *data) {
+	NameEditor &editor = *static_cast<NameEditor *>(data->UserData);
+	if (name_units(data->Buf) <= editor.limit) {
+		editor.accepted.assign(data->Buf, data->BufTextLen);
+	} else {
+		int caret = data->CursorPos;
+		data->DeleteChars(0, data->BufTextLen);
+		data->InsertChars(0, editor.accepted.c_str());
+		if (caret > data->BufTextLen) caret = data->BufTextLen;
+		while (caret > 0 && (static_cast<unsigned char>(data->Buf[caret]) & 0xc0) == 0x80) --caret;
+		data->CursorPos = data->SelectionStart = data->SelectionEnd = caret;
+	}
+	return 0;
+}
+
+static void name_backspace(NameEditor &editor) {
+	size_t n = std::strlen(editor.text);
+	if (!n) return;
+	do { --n; } while (n && (static_cast<unsigned char>(editor.text[n]) & 0xc0) == 0x80);
+	editor.text[n] = 0;
+}
+
+static bool name_key_grid(NameEditor &editor, bool select) {
+	static const char *const letters[] = {"qwertyuiop", "asdfghjkl-", "zxcvbnm.'_"};
+	static const char *const symbols[] = {"1234567890", "@#$%&*+=?!", "()[]{}:;,/"};
+	static const char *const actions[] = {"Case", "Symbols", "Space", "Erase", "Done"};
+	static const ImGuiKey left[] = {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadLStickLeft};
+	static const ImGuiKey right[] = {ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickRight};
+	static const ImGuiKey up[] = {ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp};
+	static const ImGuiKey down[] = {ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown};
+	if (editor.armed) {
+		if (keys_pressed(up)) editor.row = (editor.row + 3) % 4;
+		if (keys_pressed(down)) editor.row = (editor.row + 1) % 4;
+		const int step = editor.row == 3 ? 2 : 1;
+		if (keys_pressed(left)) editor.col = (editor.col + 10 - step) % 10;
+		if (keys_pressed(right)) editor.col = (editor.col + step) % 10;
+		if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceLeft, true)) name_backspace(editor);
+		if (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false)) editor.upper = !editor.upper;
+	}
+	const float gap = ImGui::GetStyle().ItemSpacing.x;
+	const float width = (ImGui::GetContentRegionAvail().x - 9 * gap) / 10;
+	bool done = false;
+	for (int row = 0; row < 4; ++row) {
+		const bool action = row == 3;
+		for (int i = 0; i < (action ? 5 : 10); ++i) {
+			if (i) ImGui::SameLine();
+			const bool focused = editor.row == row && (action ? editor.col / 2 : editor.col) == i;
+			ImGui::PushID(row * 10 + i);
+			if (focused) {
+				ImGui::PushStyleColor(ImGuiCol_Button, ui::accent);
+				ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui::accent_hi);
+				ImGui::PushStyleColor(ImGuiCol_ButtonActive, ui::accent);
+				ImGui::PushStyleColor(ImGuiCol_Text, ui::accent_ink);
+			}
+			char ch = action ? 0 : (editor.symbols ? symbols : letters)[row][i];
+			if (!editor.symbols && editor.upper && ch >= 'a' && ch <= 'z') ch -= 'a' - 'A';
+			char key[] = {ch, 0};
+			const bool clicked = ImGui::Button(action ? actions[i] : key,
+				ImVec2(action ? 2 * width + gap : width, ImGui::GetFrameHeight() + 5));
+			if (focused) ImGui::PopStyleColor(4);
+			ImGui::PopID();
+			if (!clicked && !(focused && select)) continue;
+			if (action) {
+				switch (i) {
+				case 0: editor.upper = !editor.upper; break;
+				case 1: editor.symbols = !editor.symbols; break;
+				case 2: ch = ' '; break;
+				case 3: name_backspace(editor); break;
+				case 4: done = true; break;
+				}
+			}
+			const size_t n = std::strlen(editor.text);
+			if (ch && n + 1 < sizeof editor.text && name_units(editor.text) < editor.limit) {
+				editor.text[n] = ch;
+				editor.text[n + 1] = 0;
+			}
+		}
+	}
+	return done;
+}
+
+static void build_name_editor(float w, float h) {
+	static NameEditor editor;
+	ImeView v;
+	if (!ime_view(&v)) { editor.open = false; return; }
+	const bool opened = !editor.open || v.seq != editor.seq;
+	if (opened) {
+		editor = NameEditor{};
+		editor.open = true;
+		editor.seq = v.seq;
+		editor.limit = v.max_utf16;
+		char mode[8]; settings_str("input_mode", "auto", mode, sizeof mode);
+		editor.pad = !std::strcmp(mode, "pad") ||
+			(std::strcmp(mode, "kbm") && window_gamepad_connected() && !window_kbm_active());
+		std::snprintf(editor.text, sizeof editor.text, "%s", v.text);
+		editor.accepted = editor.text;
+	}
+	if (editor.answered) return;
+	static const ImGuiKey opening[] = {ImGuiKey_C, ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space,
+		ImGuiKey_Escape, ImGuiKey_GamepadFaceDown, ImGuiKey_GamepadFaceRight, ImGuiKey_GamepadStart};
+	if (!editor.armed && !keys_down(opening) && !ImGui::IsAnyMouseDown()) editor.armed = true;
+	ImGui::SetNextWindowPos(ImVec2(w / 2, h / 2), ImGuiCond_Always, ImVec2(.5f, .5f));
+	ImGui::SetNextWindowSize(ImVec2(fminf(w - 16, editor.pad ? 560 : 420), 0), ImGuiCond_Always);
+	if (opened) ImGui::SetNextWindowFocus();
+	ImGui::Begin("Character name", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+	bool confirm = false, cancel = false;
+	if (editor.pad) {
+		ImGui::TextUnformatted(editor.text[0] ? editor.text : "Enter a name");
+		ImGui::TextDisabled("%u / %u", name_units(editor.text), editor.limit);
+		const bool select = editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5, 6));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3, 4));
+		confirm = name_key_grid(editor, select);
+		ImGui::PopStyleVar(2);
+		confirm |= editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false);
+		cancel = editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+		ImGui::TextDisabled("D-pad  Move    Cross  Select    Start  Confirm    Circle  Cancel");
+	} else {
+		if (opened) ImGui::SetKeyboardFocusHere();
+		ImGui::SetNextItemWidth(-1);
+		confirm = ImGui::InputText("##character-name", editor.text, sizeof editor.text,
+			ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll |
+			ImGuiInputTextFlags_CallbackEdit, name_edited, &editor) && editor.armed;
+		cancel = editor.armed && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+		ImGui::TextDisabled("%u / %u", name_units(editor.text), editor.limit);
+	}
+	ImGui::BeginDisabled(!editor.armed || !editor.text[std::strspn(editor.text, " ")]);
+	confirm |= ImGui::Button("Confirm");
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!editor.armed);
+	cancel |= ImGui::Button("Cancel");
+	ImGui::EndDisabled();
+	ImGui::End();
+	if (cancel) ime_cancel(editor.seq);
+	else if (confirm && editor.armed && editor.text[std::strspn(editor.text, " ")]) ime_submit(editor.seq, editor.text);
+	else return;
+	editor.answered = true;
+}
 static void build_save_dialog(float w, float hgt) {
 	SaveDlgView v; const int kind = savedlg_view(&v);
 	if (kind == SAVEDLG_NONE) { savedlg_release(); g_sd_seq = -1; return; }
+	const bool nova = nova_title(), en = nova && nova_save_english();   /* Done by Codex */
+	const bool mouse_keys = window_kbm_active() || !window_gamepad_connected();
 	if (v.seq != g_sd_seq) { g_sd_seq = v.seq; g_sd_sel = kind == SAVEDLG_LIST ? v.focus : 0; g_sd_armed = false; }
 	/* a key already down as the step appeared (the press that asked the game to save) answers nothing */
 	if (!g_sd_armed && !keys_down(K_OK) && !keys_down(K_BACK)) g_sd_armed = true;
-	const bool ok = g_sd_armed && keys_pressed(K_OK), back = g_sd_armed && keys_pressed(K_BACK);
+	const bool ok = g_sd_armed && !keys_down(K_BACK) && keys_pressed(K_OK);
+	const bool back = g_sd_armed && keys_pressed(K_BACK);
 	int answer = 0; bool answered = false, moved = false;
 	const float s = w >= 1400 ? 2.0f : 1.0f;   /* (the bitmap font: integer multiples stay crisp) */
 	ImGui::SetNextWindowPos(ImVec2(w * 0.5f, hgt * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSize(ImVec2(fminf(w - 32, 520 * s), 0), ImGuiCond_Always);   /* (height 0: fitted every frame) */
+	ImGui::SetNextWindowSize(ImVec2(fminf(w - 24, (nova ? 625 : 520) * s), 0), ImGuiCond_Always);
 	ImGui::SetNextWindowBgAlpha(0.95f);
 	ImGui::Begin("##savedlg", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
 	ImGui::SetWindowFontScale(s);
 	const ImU32 dim = ImGui::GetColorU32(ImGuiCol_TextDisabled), txt = ImGui::GetColorU32(ImGuiCol_Text);
+	const char *heading = v.disp == 2 ? "Load saved data" : v.disp == 3 ? "Delete saved data" : "Save game";
+	if (nova) ImGui::SeparatorText(heading);
 	if (kind == SAVEDLG_LIST) {
-		ImGui::TextUnformatted(v.title[0] ? v.title : "Saved data");
-		ImGui::Separator();
+		if (!nova) { ImGui::TextUnformatted(v.title[0] ? v.title : "Saved data"); ImGui::Separator(); }
 		if (g_sd_armed && v.nrows) {
 			if (keys_pressed(K_UP) && g_sd_sel > 0) { g_sd_sel--; moved = true; }
 			if (keys_pressed(K_DOWN) && g_sd_sel < v.nrows - 1) { g_sd_sel++; moved = true; }
@@ -923,8 +1299,9 @@ static void build_save_dialog(float w, float hgt) {
 		if (g_sd_sel >= v.nrows) g_sd_sel = v.nrows ? v.nrows - 1 : 0;
 		if (!v.nrows) ImGui::TextDisabled("There is no saved data.");
 		else {
-			const float lh = ImGui::GetTextLineHeight(), rowh = 3 * lh + 12 * s;
-			ImGui::BeginChild("rows", ImVec2(0, (rowh + ImGui::GetStyle().ItemSpacing.y) * (float)(v.nrows < 5 ? v.nrows : 5)));
+			const float lh = ImGui::GetTextLineHeight(), rowh = 3 * lh + (nova ? 18 : 12) * s;
+			const float list_height = (rowh + ImGui::GetStyle().ItemSpacing.y) * (float)(v.nrows < 5 ? v.nrows : 5);
+			ImGui::BeginChild("rows", ImVec2(0, fminf(list_height, fmaxf(rowh, hgt - 135 * s))));
 			ImFont *font = ImGui::GetFont(); const float fs = ImGui::GetFontSize();
 			for (int i = 0; i < v.nrows; i++) {
 				const SaveDlgRow &r = v.rows[i];
@@ -934,13 +1311,24 @@ static void build_save_dialog(float w, float hgt) {
 				if (ImGui::IsItemHovered() && (ImGui::GetIO().MouseDelta.x || ImGui::GetIO().MouseDelta.y)) g_sd_sel = i;
 				if (moved && i == g_sd_sel) ImGui::SetScrollHereY(0.5f);
 				ImDrawList *dl = ImGui::GetWindowDrawList();
-				dl->AddText(font, fs, ImVec2(p.x + 6 * s, p.y + 4 * s), txt, r.title);
+				float text_x = p.x + 6 * s;
+				if (nova) {
+					const ImU32 selected = ImGui::GetColorU32(i == g_sd_sel ? ui::accent : ui::muted);
+					if (i == g_sd_sel) dl->AddRectFilled(p, ImVec2(p.x + 3 * s, p.y + rowh), selected, 1);
+					const float icon_size = rowh - 14 * s;
+					const ImVec2 a(p.x + 11 * s, p.y + 7 * s), b(a.x + icon_size, a.y + icon_size);
+					if (r.exists && g_save_icon) dl->AddImage((ImTextureID)(intptr_t)g_save_icon, a, b);
+					else dl->AddRect(a, b, selected, 4);
+					text_x = b.x + 10 * s;
+				}
+				dl->AddText(font, fs, ImVec2(text_x, p.y + 4 * s), txt, r.title);
 				if (r.exists) {
 					const float dw = font->CalcTextSizeA(fs, FLT_MAX, 0, r.date).x;
 					dl->AddText(font, fs, ImVec2(p.x + rw - dw - 6 * s, p.y + 4 * s), dim, r.date);
-					if (r.sub[0]) dl->AddText(font, fs, ImVec2(p.x + 6 * s, p.y + 6 * s + lh), txt, r.sub);
-					if (r.detail[0]) dl->AddText(font, fs, ImVec2(p.x + 6 * s, p.y + 8 * s + 2 * lh), dim, r.detail);
-				} else dl->AddText(font, fs, ImVec2(p.x + 6 * s, p.y + 6 * s + lh), dim, "(empty)");
+					const auto subtitle = nova_save_subtitle(r.sub, en), detail = nova_save_detail(r.detail, en);
+					if (!subtitle.empty()) dl->AddText(font, fs, ImVec2(text_x, p.y + 6 * s + lh), txt, subtitle.c_str());
+					if (!detail.empty()) dl->AddText(font, fs, ImVec2(text_x, p.y + 8 * s + 2 * lh), dim, detail.c_str());
+				} else dl->AddText(font, fs, ImVec2(text_x, p.y + 6 * s + lh), dim, "(empty)");
 				ImGui::PopID();
 			}
 			ImGui::EndChild();
@@ -948,7 +1336,8 @@ static void build_save_dialog(float w, float hgt) {
 		if (ok && v.nrows) { answer = g_sd_sel; answered = true; }
 		ImGui::Separator();
 		if (ImGui::Button("Back") || back) { answer = SAVEDLG_CANCEL; answered = true; }
-		ImGui::SameLine(); ImGui::TextDisabled("  Cross / Enter: choose    Circle / Esc: back");
+		ImGui::SameLine(); ImGui::TextDisabled("%s", !nova ? "Cross / Enter: choose    Circle / Esc: back" :
+			mouse_keys ? "Enter  Select    Esc  Back" : "Cross  Select    Circle  Back");
 	} else if (kind == SAVEDLG_YESNO) {
 		ImGui::PushTextWrapPos(0); ImGui::TextUnformatted(v.msg[0] ? v.msg : "Continue?"); ImGui::PopTextWrapPos();
 		ImGui::Spacing();
@@ -964,7 +1353,8 @@ static void build_save_dialog(float w, float hgt) {
 		}
 		if (ok) { answer = g_sd_sel ? SAVEDLG_NO : SAVEDLG_YES; answered = true; }
 		if (back) { answer = SAVEDLG_CANCEL; answered = true; }
-		ImGui::SameLine(); ImGui::TextDisabled("  Cross / Enter    Circle / Esc: back");
+		ImGui::SameLine(); ImGui::TextDisabled("%s", !nova ? "Cross / Enter    Circle / Esc: back" :
+			mouse_keys ? "Enter  Confirm    Esc  Back" : "Cross  Confirm    Circle  Back");
 	} else {   /* SAVEDLG_WAIT: the game closes it */
 		ImGui::PushTextWrapPos(0); ImGui::TextUnformatted(v.msg[0] ? v.msg : "Please wait..."); ImGui::PopTextWrapPos();
 		if (v.percent >= 0) ImGui::ProgressBar(v.percent / 100.0f, ImVec2(-1, 0));
@@ -1032,7 +1422,10 @@ static void build_closed(void) {
 	if (g_tab_a > 0) build_tab(w, t);
 	if (g_intro) build_intro();   /* (the touch card in place of the pause banner; the markers drawn over it) */
 	build_marks();
-	if (g_has_window) build_save_dialog(w, hgt);
+	if (g_has_window) {
+		build_save_dialog(w, hgt);
+		build_name_editor(w, hgt);
+	}
 	if (g_paused && !g_intro) build_pause_banner(w, hgt);
 	toasts_take(t);
 	if (g_ntoasts) build_toasts(w, hgt, t);

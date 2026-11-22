@@ -532,6 +532,16 @@ void audio_output(int dev, const void *buf, uint32_t bytes) {
 	 * lips it was set to hide was NGS reporting a stereo voice's samples at half the hardware's count --
 	 * ngs.c h_voice_state -- and a fixed number went stale with every fix.) */
 	int extra = 0;
+	/* RECOMP_AUDIO_LOG=1: each port's handover every 5 s -- buffers, the silence the delay top-up below put in
+	 * (each top-up is a gap in the sound), the times the port was found empty, and the longest wait between two
+	 * buffers (Phantasy Star Nova's CRI port hands over 256 samples, 5.3 ms: a top-up whenever it was a little
+	 * late chopped its sound every ~21 ms, 2026-11-19, docs/psnova/audio.md) */
+	static int alog = -1; if (alog < 0) { const char *e = getenv("RECOMP_AUDIO_LOG"); alog = e && *e && *e != '0'; }
+	static uint64_t al_t0[8], al_last[8], al_calls[8], al_pads[8], al_padf[8], al_dry[8], al_late[8], al_max[8];
+	/* RECOMP_AUDIO_PAD=dip: the old top-up (whenever the queue held less than the delay); default: only when the port
+	 * ran dry or the delay rose -- a port still holding sound is not topped up with silence in the middle of it */
+	static int pad_dip = -1; if (pad_dip < 0) { const char *e = getenv("RECOMP_AUDIO_PAD"); pad_dip = e && !strcmp(e, "dip"); }
+	static int held[8];   /* the delay (bytes) each port's queue was last brought up to */
 	{	int frame = (int)achan[dev - 1] * 2, q = SDL_GetAudioStreamQueued(s);
 		static int dev_frames = -1; if (dev_frames < 0) dev_frames = getenv("RECOMP_AUDIO_FRAMES") ? atoi(getenv("RECOMP_AUDIO_FRAMES")) : 256;
 		{	/* this port's own latency for the new buffer, our delay excluded (av_auto_delay) */
@@ -542,7 +552,33 @@ void audio_output(int dev, const void *buf, uint32_t bytes) {
 		}
 		int dms = av_auto_delay(dev - 1);
 		extra = (int)((uint64_t)dms * afreq[dev - 1] / 1000) * frame;
-		if (extra && q < extra) { static uint8_t zero[8192]; for (int pad = (extra - q) / frame * frame; pad > 0;) { int n = pad < (int)sizeof zero ? pad : (int)sizeof zero; SDL_PutAudioStreamData(s, zero, n); pad -= n; } }
+		/* the top-up: silence up to the delay. Only when the port ran dry (the speakers are getting silence already:
+		 * the delay is set up again so the next late buffer doesn't run dry too) or the delay rose (by the rise) --
+		 * not whenever the queue dipped under the delay: the pacing wait below leaves exactly the delay plus one
+		 * buffer queued, so with small buffers every slightly late handover was a dip, and each top-up cut the
+		 * sound for a device period while the delay's own sound still waited. A lower delay drains through the
+		 * pacing wait. */
+		int pad = 0, d = dev - 1;
+		if (pad_dip) { if (extra && q < extra) pad = extra - q; }
+		else if (extra && q == 0) pad = extra;
+		else if (extra > held[d]) { pad = extra - held[d]; if (pad > extra - q) pad = extra - q; if (pad < 0) pad = 0; }
+		if (q == 0 || extra > held[d] || extra < held[d]) held[d] = extra;
+		pad = pad / frame * frame;
+		if (pad > 0) { static uint8_t zero[8192]; al_pads[d]++; al_padf[d] += (uint64_t)(pad / frame); for (int left = pad; left > 0;) { int n = left < (int)sizeof zero ? left : (int)sizeof zero; SDL_PutAudioStreamData(s, zero, n); left -= n; } }
+		if (alog) {
+			uint64_t now = SDL_GetTicksNS() / 1000;
+			if (!al_t0[d]) al_t0[d] = now;
+			if (q == 0) al_dry[d]++;
+			if (al_last[d]) { uint64_t gap = now - al_last[d], blen = (uint64_t)bytes / (uint64_t)frame * 1000000ull / afreq[d]; if (gap > al_max[d]) al_max[d] = gap; if (gap > blen + blen / 2) al_late[d]++; }
+			al_last[d] = now; al_calls[d]++;
+			if (now - al_t0[d] >= 5000000) {
+				fprintf(stderr, "    audio port dev %d: %llu buffers of %u frames in %.1f s, %llu top-ups (%.0f ms of silence put in), %llu found empty, %llu late (> 1.5 buffers), longest wait %.1f ms, delay %d ms, queue %d ms\n",
+				        dev, (unsigned long long)al_calls[d], bytes / (uint32_t)frame, (double)(now - al_t0[d]) / 1e6, (unsigned long long)al_pads[d],
+				        (double)al_padf[d] * 1000.0 / afreq[d], (unsigned long long)al_dry[d], (unsigned long long)al_late[d], (double)al_max[d] / 1000.0, dms,
+				        (int)((uint64_t)SDL_GetAudioStreamQueued(s) * 1000 / ((uint64_t)afreq[d] * frame)));
+				al_t0[d] = now; al_calls[d] = al_pads[d] = al_padf[d] = al_dry[d] = al_late[d] = al_max[d] = 0;
+			}
+		}
 	}
 	SDL_PutAudioStreamData(s, buf, (int)bytes);
 	{	uint32_t ms = 0;
@@ -963,9 +999,11 @@ void window_run(void *(*fn)(void *), void *arg) {
 			/* exclusive while open: the menu gets every key/mouse/gamepad event instead of the game
 			 * (which is paused anyway -- display.c) */
 			if (overlay_is_open()) { overlay_process_event(&e); continue; }
-			/* the save-data dialog waiting on the player (overlay_dialog_active): it has the keys and the mouse;
-			 * the game is polling the dialog, not the pad */
-			if (overlay_dialog_active()) { overlay_process_event(&e); continue; }
+			/* Done by Codex. Dialogs own input, while controller connection events
+			 * still reach the window's device management below. */
+			if (overlay_dialog_active() && e.type != SDL_EVENT_GAMEPAD_ADDED && e.type != SDL_EVENT_GAMEPAD_REMOVED) {
+				overlay_process_event(&e); continue;
+			}
 			/* closed: ImGui still sees the mouse (and the window's focus/enter/leave), so the menu bar can
 			 * show on a hover at the top edge; a press or a move it has claimed (the pointer over the bar,
 			 * a menu or the pull tab, as of the last frame drawn) never becomes a touch below. A release
@@ -1309,8 +1347,13 @@ void window_run(void *(*fn)(void *), void *arg) {
 		}
 		{	/* the menu just closed (any way: F10, Escape, a pad combo, its Resume button): the sticks moved
 			 * while it had the events -- a stick let go with the menu up would otherwise stay deflected */
-			static int was_open; int open = overlay_is_open() || overlay_dialog_active();   /* (the save dialog too) */
-			if (open && !was_open) { buttons = 0; touch_down = 0; gamepad_touch_release(); for (int i = 0; i < KB_N; i++) kb_binds[i].held = 0; }   /* let go of what was held as it opened */
+			static int was_open; int open = overlay_is_open() || overlay_dialog_active();
+			if (open) { /* Done by Codex: keep gameplay neutral throughout the prompt. */
+				buttons = 0; touch_down = 0; kbm_lmb = kbm_rmb = 0;
+				gamepad_touch_release();
+				for (int i = 0; i < KB_N; i++) kb_binds[i].held = 0;
+				for (int i = 0; i < 4; i++) sticks[i] = 128;
+			}
 			if (was_open && !open) {
 				kb_reload();   /* (the Controls page may have rebound keys) */
 				for (int i = 0; i < 4; i++) sticks[i] = pad ? (uint8_t)((SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)i) + 32768) >> 8) : 128;

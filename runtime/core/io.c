@@ -45,9 +45,55 @@ void host_path_fold(char *buf, size_t root_len) {
 		*end = save; q = end + 1; while (*q == '/') q++;
 	}
 }
+/* Language overlays (2026-11-19, PS Nova's English/Arabic): <RECOMP_FS>/lang/<code>/ holds files laid out as app0 that
+ * replace the game's own for that language (a translated text archive, a re-subtitled movie archive). The language is
+ * the "language" setting (RECOMP_LANGUAGE over it; not set: the first word of <RECOMP_FS>/lang/default.txt, the pack's
+ * default), read once at the first file open, so a change applies at the next start; "original", "" or a code with no
+ * folder = the game as shipped. Only files that exist in the overlay are swapped (a folder
+ * listing of app0 still shows app0's own entries). No fs/lang folder: nothing changes for any game. */
+const char *host_lang(void) {
+	static char code[32]; static int done;
+	static pthread_mutex_t mx = PTHREAD_MUTEX_INITIALIZER;   /* (the first opens can come from several threads: none may see "no language" before it is known) */
+	if (!__atomic_load_n(&done, __ATOMIC_ACQUIRE)) {
+		pthread_mutex_lock(&mx);
+		if (__atomic_load_n(&done, __ATOMIC_RELAXED)) { pthread_mutex_unlock(&mx); return code; }
+		const char *e = getenv("RECOMP_LANGUAGE");
+		extern const char *settings_str(const char *key, const char *def, char *buf, int bufsize);
+		char b[32]; const char *v = e ? e : settings_str("language", "?", b, sizeof b);
+		char dflt[32] = "";
+		if (!strcmp(v, "?")) {   /* not chosen in the menu: the default, the first word of <RECOMP_FS>/lang/default.txt (none = the game's own) */
+			char p[1024]; snprintf(p, sizeof p, "%s/lang/default.txt", getenv("RECOMP_FS") ? getenv("RECOMP_FS") : "fs");
+			FILE *f = fopen(p, "rb");
+			if (f) { char line[64] = {0}; if (fgets(line, sizeof line, f)) { char *q = line; if (!strncmp(q, "\xEF\xBB\xBF", 3)) q += 3; while (*q == ' ' || *q == '\t') q++; q[strcspn(q, " \t\r\n#")] = 0; snprintf(dflt, sizeof dflt, "%s", q); } fclose(f); }
+			v = dflt;
+		}
+		if (!strcmp(v, "original")) v = "";   /* the menu's "Original": the game's own files, whatever the default */
+		if (v && *v && !strchr(v, '/') && !strchr(v, '\\') && !strstr(v, "..")) {
+			char d[1024]; struct stat st;
+			snprintf(d, sizeof d, "%s/lang/%s", getenv("RECOMP_FS") ? getenv("RECOMP_FS") : "fs", v);
+			if (!stat(d, &st) && S_ISDIR(st.st_mode)) snprintf(code, sizeof code, "%s", v);
+			else fprintf(stderr, "language %s: no folder %s, the game's own files are used\n", v, d);
+		}
+		if (*code) fprintf(stderr, "language %s: files in lang/%s replace the game's own\n", code, code);
+		__atomic_store_n(&done, 1, __ATOMIC_RELEASE);
+		pthread_mutex_unlock(&mx);
+	}
+	return code;
+}
+void host_path_lang(char *buf, size_t n, size_t root_len) {   /* buf = <root>/app0/rest (already folded): the overlay's copy when it has one */
+	const char *code = host_lang();
+	if (!*code || strncasecmp(buf + root_len, "/app0/", 6)) return;   /* (the device as spelled: a case-insensitive host keeps "APP0") */
+	char alt[1024]; struct stat st;
+	int k = snprintf(alt, sizeof alt, "%.*s/lang/%s", (int)root_len, buf, code);
+	if (k <= 0 || (size_t)k >= sizeof alt) return;
+	size_t base = (size_t)k;
+	if (snprintf(alt + base, sizeof alt - base, "/%s", buf + root_len + 6) >= (int)(sizeof alt - base)) return;
+	host_path_fold(alt, base);
+	if (!stat(alt, &st) && S_ISREG(st.st_mode) && strlen(alt) < n) memcpy(buf, alt, strlen(alt) + 1);
+}
 static const char *host_path_s(const char *p, char *buf, size_t n) {
 	const char *root = getenv("RECOMP_FS") ? getenv("RECOMP_FS") : "fs";
-	if (*p != '/' && !strchr(p, ':')) { snprintf(buf, n, "%s/app0/%s", root, p); return buf; }
+	if (*p != '/' && !strchr(p, ':')) { snprintf(buf, n, "%s/app0/%s", root, p); host_path_lang(buf, n, strlen(root)); return buf; }
 	while (*p == '/') p++;
 	const char *colon = strchr(p, ':'), *slash = strchr(p, '/');
 	if (colon && (!slash || colon < slash)) {
@@ -56,6 +102,7 @@ static const char *host_path_s(const char *p, char *buf, size_t n) {
 	} else snprintf(buf, n, "%s/%s", root, p);
 	for (char *q = buf + strlen(root); *q; q++) if (*q == '\\') *q = '/';   /* a separator on the console (exFAT forbids it in names): Uncharted saves "slot_000/saves\checkpoint.bin" */
 	host_path_fold(buf, strlen(root));
+	host_path_lang(buf, n, strlen(root));
 	return buf;
 }
 static const char *host_path(uint32_t gp, char *buf, size_t n) { return host_path_s((char *)G(gp), buf, n); }
@@ -80,18 +127,35 @@ static uint32_t sce_err(int e) {
  * or rename the game asks for anywhere is logged. (Uncharted's whole app0 vanished during a gate
  * run on 2026-10-13, cause not found.) A host path is in app0 when it, or for one that doesn't
  * exist yet its folder, resolves under <RECOMP_FS>/app0 -- links and ".." included. */
+/* (The prefixes are resolved once, together: app0, fs/lang, and the active language's own folder -- on macOS/Linux each
+ * fs/lang/<code> is a symlink into the dump, so its files resolve outside fs/lang.) */
+/* Done by Codex. The firmware probe mounts system resources at vs0 and sa0. */
+static char ro_pre[5][PATH_MAX]; static int ro_have[5];
+static pthread_once_t ro_once = PTHREAD_ONCE_INIT;
+static void ro_init(void) {
+	const char *root = getenv("RECOMP_FS") ? getenv("RECOMP_FS") : "fs", *code = host_lang();
+	char p[1024];
+	snprintf(p, sizeof p, "%s/app0", root); ro_have[0] = realpath(p, ro_pre[0]) != 0;
+	snprintf(p, sizeof p, "%s/lang", root); ro_have[1] = realpath(p, ro_pre[1]) != 0;
+	snprintf(p, sizeof p, "%s/lang/%s", root, code); ro_have[2] = *code && realpath(p, ro_pre[2]) != 0;
+	snprintf(p, sizeof p, "%s/vs0", root); ro_have[3] = realpath(p, ro_pre[3]) != 0;
+	snprintf(p, sizeof p, "%s/sa0", root); ro_have[4] = realpath(p, ro_pre[4]) != 0;
+}
 int guest_path_readonly(const char *hp) {
-	static char app0[PATH_MAX]; static int have = -1;
-	if (have < 0) { char p[1024]; snprintf(p, sizeof p, "%s/app0", getenv("RECOMP_FS") ? getenv("RECOMP_FS") : "fs"); have = realpath(p, app0) != 0; }
-	if (!have) return 0;
+	pthread_once(&ro_once, ro_init);
+	if (!ro_have[0] && !ro_have[1] && !ro_have[2] && !ro_have[3] && !ro_have[4]) return 0;
 	char rp[PATH_MAX];
 	if (!realpath(hp, rp)) {
 		char dir[1024]; snprintf(dir, sizeof dir, "%s", hp);
 		char *sl = strrchr(dir, '/'); if (!sl) return 0;
 		*sl = 0; if (!realpath(dir, rp)) return 0;
 	}
-	size_t n = strlen(app0);
-	return !strncmp(rp, app0, n) && (rp[n] == 0 || rp[n] == '/');
+	for (size_t k = 0; k < sizeof ro_have / sizeof *ro_have; k++) {
+		if (!ro_have[k]) continue;
+		size_t n = strlen(ro_pre[k]);
+		if (!strncmp(rp, ro_pre[k], n) && (rp[n] == 0 || rp[n] == '/')) return 1;
+	}
+	return 0;
 }
 static int readonly_refused(const char *what, const char *gp, const char *hp) {
 	if (!guest_path_readonly(hp)) return 0;

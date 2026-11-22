@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include "guestwatch.h"
 #include "hle.h"
+#include "ime.h"
 #include "net.h"
 #include "overlay.h"   /* (overlay_toast_titled: the network check's notice) */
 #include "platform.h"
@@ -53,6 +54,189 @@ static void h_net_dlg_result(Cpu *c) {
  * did. Answered "nothing new to accept" (kind 2): there is no PSN to show terms for. */
 static void h_eula_dlg_result(Cpu *c) { if (A0) { for (int i = 0; i < 0x2c; i += 4) WR32(A0 + i, 0); WR32(A0 + 4, 2); } RET(0); }
 static void h_zero(Cpu *c) { RET(0); }
+
+/* Done by Codex. The firmware dialog passes startup arguments through
+ * SceSysmoduleOpt. These entries resolve only in the isolated firmware probe. */
+enum { FW_MODULE_IDLE, FW_MODULE_STARTING, FW_MODULE_STARTED };
+typedef struct {
+	uint32_t id;
+	const char *start_export;
+	const char *stop_export;
+	int state;
+} DialogFirmwareModule;
+static DialogFirmwareModule dialog_firmware[] = {
+	{0x80000008u, "__recomp_start_libpaf", "__recomp_stop_libpaf", FW_MODULE_IDLE},
+	{0x8000000cu, "__recomp_start_common_gui_dialog", "__recomp_stop_common_gui_dialog", FW_MODULE_IDLE},
+	{0x80000012u, "__recomp_start_libcdlg_main", "__recomp_stop_libcdlg_main", FW_MODULE_IDLE},
+	{0x80000015u, "__recomp_start_libcdlg_savedata", "__recomp_stop_libcdlg_savedata", FW_MODULE_IDLE},
+};
+static pthread_mutex_t dialog_firmware_lock = PTHREAD_MUTEX_INITIALIZER;
+extern uint32_t module_export_addr(const char *name);
+
+static DialogFirmwareModule *dialog_firmware_module(uint32_t id) {
+	for (size_t i = 0; i < sizeof dialog_firmware / sizeof *dialog_firmware; i++)
+		if (id == dialog_firmware[i].id) return &dialog_firmware[i];
+	return NULL;
+}
+
+static void h_sysmodule_internal_status(Cpu *c) {
+	DialogFirmwareModule *module = dialog_firmware_module(A0);
+	pthread_mutex_lock(&dialog_firmware_lock);
+	int loaded = module && module->state == FW_MODULE_STARTED;
+	pthread_mutex_unlock(&dialog_firmware_lock);
+	RET(loaded ? 0 : 0x805a1001u);
+}
+
+static void h_sysmodule_load_with_arg(Cpu *c) {
+	DialogFirmwareModule *module = dialog_firmware_module(A0);
+	uint32_t start = module ? module_export_addr(module->start_export) : 0;
+	if (!start || (A1 && !A2) || !A3) {
+		fprintf(stderr, "    firmware module %#x load unavailable (args %u)\n", A0, A1);
+		RET(0x805a1000u);
+		return;
+	}
+	uint32_t result_ptr = RD32(A3 + 4);
+	if (!result_ptr) { RET(0x805a1000u); return; }
+
+	pthread_mutex_lock(&dialog_firmware_lock);
+	int state = module->state;
+	if (state == FW_MODULE_IDLE) module->state = FW_MODULE_STARTING;
+	pthread_mutex_unlock(&dialog_firmware_lock);
+	if (state == FW_MODULE_STARTING) { RET(0x805a10ffu); return; }
+	if (state == FW_MODULE_STARTED) { WR32(result_ptr, 0); RET(0); return; }
+
+	fprintf(stderr, "    starting firmware module %#x (args %u)\n", A0, A1);
+	uint32_t result = guest_call(c, start, A1, A2);
+	pthread_mutex_lock(&dialog_firmware_lock);
+	module->state = (int32_t)result < 0 ? FW_MODULE_IDLE : FW_MODULE_STARTED;
+	pthread_mutex_unlock(&dialog_firmware_lock);
+	WR32(result_ptr, result);
+	fprintf(stderr, "    firmware module %#x start returned %#x\n", module->id, result);
+	RET(0);
+}
+
+static void h_sysmodule_unload_with_arg(Cpu *c) {
+	DialogFirmwareModule *module = dialog_firmware_module(A0);
+	uint32_t stop = module ? module_export_addr(module->stop_export) : 0;
+	if (!stop || (A1 && !A2) || !A3) { RET(0x805a1000u); return; }
+
+	pthread_mutex_lock(&dialog_firmware_lock);
+	int state = module->state;
+	if (state == FW_MODULE_STARTED) module->state = FW_MODULE_STARTING;
+	pthread_mutex_unlock(&dialog_firmware_lock);
+	if (state != FW_MODULE_STARTED) { RET(0x805a1001u); return; }
+
+	uint32_t status = RD32(A3 + 4);
+	uint32_t result = guest_call(c, stop, A1, A2);
+	pthread_mutex_lock(&dialog_firmware_lock);
+	module->state = (int32_t)result < 0 ? FW_MODULE_STARTED : FW_MODULE_IDLE;
+	pthread_mutex_unlock(&dialog_firmware_lock);
+	if (status) WR32(status, result);
+	fprintf(stderr, "    firmware module %#x stop returned %#x\n", module->id, result);
+	RET(0);
+}
+
+/* Done by Codex. A mounted vs0 already has a Vita path in this runtime. */
+static void h_convert_vs0_path(Cpu *c) {
+	if (!A0 || !A1 || !A2) { RET(0x80010016u); return; }
+	const char *path = (const char *)G(A0);
+	if (strncmp(path, "vs0:", 4)) { RET(0x80010016u); return; }
+	size_t limit = A2 < 1024 ? A2 : 1024;
+	size_t size = strnlen(path, limit);
+	if (size == limit) { RET(0x8001005bu); return; }
+	memmove(G(A1), path, size + 1);
+	RET(0);
+}
+
+static void h_dialog_display_resolution(Cpu *c) {
+	if (!A0 || !A1) { RET(0x80010016u); return; }
+	WR32(A0, 960);
+	WR32(A1, 544);
+	RET(0);
+}
+
+/* Done by Codex. PAF opens the save plug-in by path, then passes its plug-in
+ * interface pointer to module_start. The image has already been mapped. */
+#define FW_SAVE_MODULE_UID 0x62000015u
+static void h_load_dialog_plugin(Cpu *c) {
+	const char *path = A0 ? (const char *)G(A0) : "";
+	if ((strcmp(path, "vs0:sys/external/libcdlg_savedata.suprx") &&
+	     strcmp(path, "vs0:/sys/external/libcdlg_savedata.suprx")) ||
+	    !module_export_addr("__recomp_start_libcdlg_savedata")) {
+		fprintf(stderr, "    firmware plug-in not available: %.256s\n", path);
+		RET(0x80010002u);
+		return;
+	}
+	fprintf(stderr, "    mapped firmware plug-in %s\n", path);
+	RET(FW_SAVE_MODULE_UID);
+}
+
+static void h_start_dialog_plugin(Cpu *c) {
+	uint32_t start = module_export_addr("__recomp_start_libcdlg_savedata");
+	if (A0 != FW_SAVE_MODULE_UID || !start || A1 != sizeof(uint32_t) || !A2) {
+		RET(0x80010016u);
+		return;
+	}
+	uint32_t status = STK(1);
+	uint32_t result = guest_call(c, start, A1, A2);
+	if (status) WR32(status, result);
+	fprintf(stderr, "    firmware save plug-in start returned %#x\n", result);
+	RET(FW_SAVE_MODULE_UID);
+}
+
+static void h_stop_dialog_plugin(Cpu *c) {
+	uint32_t stop = module_export_addr("__recomp_stop_libcdlg_savedata");
+	if (A0 != FW_SAVE_MODULE_UID || !stop || (A1 && !A2)) {
+		RET(0x80010016u);
+		return;
+	}
+	uint32_t status = STK(1);
+	uint32_t result = guest_call(c, stop, A1, A2);
+	if (status) WR32(status, result);
+	RET(FW_SAVE_MODULE_UID);
+}
+
+static void h_unload_dialog_plugin(Cpu *c) { RET(A0 == FW_SAVE_MODULE_UID ? 0 : 0x80010016u); }
+
+/* Done by Codex. The isolated firmware images and resources are Vita 3.74. */
+static void h_firmware_sdk_version(Cpu *c) { RET(0x03740000u); }
+/* Done by Codex. The firmware reads the configured UI language and confirm button. */
+static void h_firmware_system_param(Cpu *c) {
+	extern const char *host_lang(void);
+	if (!A1 || (A0 != 0x00037502u && A0 != 0x00229142u)) { RET(0x800d0004u); return; }
+	if (A0 == 0x00037502u) WR32(A1, !strcmp(host_lang(), "en") ? 1 : 0);
+	else WR32(A1, 1);   /* Cross, matching the runtime's AppUtil system setting. */
+	RET(0);
+}
+static void h_firmware_slot_param(Cpu *c);
+static void h_firmware_slot_file_open(Cpu *c);
+static void h_firmware_slot_file_get_param(Cpu *c);
+static void h_firmware_slot_file_close(Cpu *c);
+
+HleFn dialog_firmware_import(const char *name) {
+	static const HleEntry imports[] = {
+		{"sceSysmoduleLoadModuleInternalWithArg", h_sysmodule_load_with_arg},
+		{"sceSysmoduleUnloadModuleInternalWithArg", h_sysmodule_unload_with_arg},
+		{"sceSysmoduleIsLoadedInternal", h_sysmodule_internal_status},
+		{"sceAppMgrConvertVs0UserDrivePath", h_convert_vs0_path},
+		{"sceDisplayGetMaximumFrameBufResolution", h_dialog_display_resolution},
+		{"sceKernelLoadModule", h_load_dialog_plugin},
+		{"sceKernelStartModule", h_start_dialog_plugin},
+		{"sceKernelStopModule", h_stop_dialog_plugin},
+		{"sceKernelUnloadModule", h_unload_dialog_plugin},
+		{"sceKernelGetAllowedSdkVersionOnSystem", h_firmware_sdk_version},
+		{"sceRegMgrSystemParamGetInt", h_firmware_system_param},
+		{"sceRegMgrUtilityGetInt", h_firmware_system_param},
+		{"sceAppMgrSaveDataSlotGetParam", h_firmware_slot_param},
+		{"sceAppMgrSaveDataSlotFileOpen", h_firmware_slot_file_open},
+		{"sceAppMgrSaveDataSlotFileGetParam", h_firmware_slot_file_get_param},
+		{"sceAppMgrSaveDataSlotFileClose", h_firmware_slot_file_close},
+	};
+	for (size_t i = 0; i < sizeof imports / sizeof *imports; i++)
+		if (!strcmp(name, imports[i].name) && module_export_addr("__recomp_start_libcdlg_main"))
+			return imports[i].fn;
+	return 0;
+}
 static void h_drm_open(Cpu *c) {   /* every add-on licensed; RECOMP_NP_LOG names the ones the game asks for (Killzone's Botzone: P000000000001957) */
 	static int log = -1; if (log < 0) log = getenv("RECOMP_NP_LOG") != 0;
 	if (log && A0) { char id[18]; memcpy(id, G(A0), 17); id[17] = 0; fprintf(stderr, "    np: add-on licence %s -> licensed\n", id); }
@@ -77,6 +261,47 @@ static int slot_read(uint32_t id, uint8_t *p) {   /* the slot's param into p (ze
 	FILE *f = fopen(m, "rb"); if (!f) return 0;
 	if (fread(p, 1, SLOT_PARAM_SIZE, f)) {}
 	fclose(f); return 1;
+}
+
+/* Done by Codex. The 3.74 savedata plug-in opens a slot-file snapshot into a 0x228-byte
+ * buffer and indexes its signed existence bytes at +0x28 by slot ID. Its
+ * GetParam then asks for the 0x400-byte record by ID, whose first 0x34c bytes
+ * are the AppUtil slot parameter. The host stores these in .slot<N> files. */
+static void h_firmware_slot_file_open(Cpu *c) {
+	if (!A0 || !A1 || strcmp((const char *)G(A0), "savedata0:")) { RET(0x80100600u); return; }
+	memset(G(A1), 0, 0x228);
+	uint8_t p[SLOT_PARAM_SIZE];
+	for (uint32_t id = 0; id < 256; id++) if (slot_read(id, p)) WR8(A1 + 0x28 + id, 1);
+	RET(0);
+}
+static void h_firmware_slot_file_get_param(Cpu *c) {
+	uint8_t p[SLOT_PARAM_SIZE];
+	if (!A1 || A0 >= 256) { RET(0x80100600u); return; }
+	if (!slot_read(A0, p)) { RET(0x80100641u); return; }
+	extern void nova_save_translate_fields(char *subtitle, size_t subtitle_size, char *detail, size_t detail_size);
+	nova_save_translate_fields((char *)(p + 0x44), 128, (char *)(p + 0xc4), 512);
+	memset(G(A1), 0, 0x400);
+	memcpy(G(A1), p, sizeof p);
+	RET(0);
+}
+static void h_firmware_slot_file_close(Cpu *c) { RET(A0 ? 0 : 0x80100600u); }
+
+/* Done by Codex. The firmware plug-in uses a size-tagged AppMgr request.
+ * Read the same slot metadata as the host picker and localize its display copy. */
+static void h_firmware_slot_param(Cpu *c) {
+	if (!A0 || RD32(A0) != 0x418 ||
+	    memcmp(G(A0 + 0x408), "savedata0:", sizeof "savedata0:")) {
+		RET(0x80100600u);
+		return;
+	}
+	uint32_t slot = RD32(A0 + 4);
+	uint8_t param[SLOT_PARAM_SIZE];
+	if (!slot_read(slot, param)) { RET(0x80100641u); return; }
+	extern void nova_save_translate_fields(char *subtitle, size_t subtitle_size, char *detail, size_t detail_size);
+	nova_save_translate_fields((char *)(param + 0x44), 128, (char *)(param + 0xc4), 512);
+	memcpy(G(A0 + 8), param, sizeof param);
+	fprintf(stderr, "    firmware save slot %u metadata read\n", slot);
+	RET(0);
 }
 static int slot_write(uint32_t id, uint32_t param) {   /* param: a guest SceAppUtilSaveDataSlotParam, or 0 to keep the slot's own; stamps the time */
 	uint8_t p[SLOT_PARAM_SIZE];
@@ -219,7 +444,13 @@ static void sd_add_row(uint32_t id, uint32_t empty) {
 	memset(r, 0, sizeof *r); r->id = id;
 	if ((r->exists = slot_read(id, p))) {
 		slot_text(p + 0x4, 64, r->title, sizeof r->title);
-		slot_text(p + 0x44, 128, r->sub, sizeof r->sub);
+		const char *title_id = getenv("RECOMP_TITLE");
+		if (title_id && !strcmp(title_id, "PCSG00351")) {
+			/* Done by Codex. Nova stores UTF-8, including the literal player name. */
+			memcpy(r->sub, p + 0x44, 128);
+		} else {
+			slot_text(p + 0x44, 128, r->sub, sizeof r->sub);
+		}
 		const uint8_t *d = p + 0xc4; while (*d == '\n' || *d == '\r') d++;   /* (Uncharted's detail starts with a line break) */
 		slot_text(d, 512 - (size_t)(d - (p + 0xc4)), r->detail, sizeof r->detail);
 		if (!r->title[0]) snprintf(r->title, sizeof r->title, "Saved data %u", id);
@@ -547,31 +778,126 @@ static void h_ime_dialog_init(Cpu *c) {
  * "text changed" flag), 2 caret and 3 size (ignored), 4 PRESS_CLOSE and 5 PRESS_ENTER (both: finished). Its per-frame
  * code copies the text only while the keyboard is still open after an UPDATE_TEXT, so the answer comes over separate
  * updates as if typed: OPEN, then the text (ime_fill) with UPDATE_TEXT, then PRESS_ENTER a few updates later.
- * (Stubbed, the name screen waited forever with an empty box, 2026-11-18.) A real typing box in the overlay is later. */
-static struct { int open, step; uint32_t arg, handler, init, maxlen, buf, ev; } ime;
-static void ime_event(Cpu *c, uint32_t id, uint32_t caret) {   /* SceImeEvent: id +0, then the text parameter (preedit index, length, caret, str) */
-	memset(G(ime.ev), 0, 64); WR32(ime.ev, id);
-	if (id == 1) { WR32(ime.ev + 12, caret); WR32(ime.ev + 16, ime.buf); }
-	if (ime.handler) guest_call(c, ime.handler, ime.arg, ime.ev);
+ * Nova uses an interactive overlay; other titles and headless runs keep the original automatic answer. */
+/* Done by Codex: the UI only exchanges snapshots and UTF-8 with this bridge. Guest memory and callbacks stay on the guest thread. */
+#define IME_UNITS 1023
+static pthread_mutex_t ime_mu = PTHREAD_MUTEX_INITIALIZER;
+static struct {
+ int open, step, interactive, response, phase; unsigned seq;
+ uint32_t arg, handler, init, maxlen, buf, ev;
+ uint16_t initial[IME_UNITS + 1], result[IME_UNITS + 1];
+ char text[4096];
+} ime;
+static uint32_t ime_limit(void) { return ime.maxlen < IME_UNITS ? ime.maxlen : IME_UNITS; }
+static void ime_to_utf8(const uint16_t *src, char *dst, size_t cap) {
+ size_t o = 0;
+ for (size_t i = 0; src[i]; i++) {
+  uint32_t cp = src[i];
+  if (cp >= 0xd800 && cp <= 0xdbff && src[i+1] >= 0xdc00 && src[i+1] <= 0xdfff) cp = 0x10000 + ((cp-0xd800)<<10) + (src[++i]-0xdc00);
+  else if (cp >= 0xd800 && cp <= 0xdfff) cp = 0xfffd;
+  unsigned n = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+  if (o + n >= cap) break;
+  if (n == 1) dst[o++] = (char)cp;
+  else { for (unsigned j = n-1; j; j--) dst[o+j] = (char)(0x80 | (cp & 63)), cp >>= 6; dst[o] = (char)((n == 2 ? 0xc0 : n == 3 ? 0xe0 : 0xf0) | cp); o += n; }
+ }
+ dst[o] = 0;
+}
+/* Invalid UTF-8 is replaced; supplementary characters are never split at the guest limit. */
+static void ime_from_utf8(const char *s, uint16_t *out, uint32_t limit) {
+ const unsigned char *p = (const unsigned char *)s; uint32_t o = 0;
+ while (*p && o < limit) {
+  uint32_t cp; unsigned n; unsigned char b = *p;
+  if (b < 0x80) cp = b, n = 1;
+  else if (b >= 0xc2 && b <= 0xdf) cp = b & 31, n = 2;
+  else if (b >= 0xe0 && b <= 0xef) cp = b & 15, n = 3;
+  else if (b >= 0xf0 && b <= 0xf4) cp = b & 7, n = 4;
+  else { cp = 0xfffd; n = 1; }
+  if (n > 1) {
+   unsigned j; for (j = 1; j < n && p[j] && (p[j] & 0xc0) == 0x80; j++) cp = (cp << 6) | (p[j] & 63);
+   if (j != n || (n == 3 && cp < 0x800) || (n == 4 && cp < 0x10000) || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) cp = 0xfffd, n = 1;
+  }
+  if (cp > 0xffff) { if (o + 2 > limit) break; cp -= 0x10000; out[o++] = (uint16_t)(0xd800 + (cp >> 10)); out[o++] = (uint16_t)(0xdc00 + (cp & 1023)); }
+  else out[o++] = (uint16_t)cp;
+  p += n;
+ }
+ out[o] = 0;
+}
+extern int overlay_ime_available(void);
+int ime_active(void) {
+	pthread_mutex_lock(&ime_mu);
+	const int active = ime.open && ime.interactive && ime.phase < 4;
+	pthread_mutex_unlock(&ime_mu);
+	return active;
+}
+int ime_view(ImeView *out) {
+ if (!out) return 0;
+ pthread_mutex_lock(&ime_mu); memset(out, 0, sizeof *out);
+ if (ime.open && ime.interactive && !ime.response) { out->open = 1; out->seq = ime.seq; out->max_utf16 = ime_limit(); memcpy(out->text, ime.text, sizeof out->text); }
+ pthread_mutex_unlock(&ime_mu); return out->open;
+}
+void ime_submit(unsigned seq, const char *utf8) {
+ pthread_mutex_lock(&ime_mu);
+ if (ime.open && ime.interactive && !ime.response && ime.seq == seq) { ime_from_utf8(utf8 ? utf8 : "", ime.result, ime_limit()); ime.response = 1; }
+ pthread_mutex_unlock(&ime_mu);
+}
+void ime_cancel(unsigned seq) {
+ pthread_mutex_lock(&ime_mu);
+ if (ime.open && ime.interactive && !ime.response && ime.seq == seq) { memcpy(ime.result, ime.initial, sizeof ime.result); ime.response = 2; }
+ pthread_mutex_unlock(&ime_mu);
+}
+static void ime_event(Cpu *c, uint32_t id, uint32_t caret) {
+ memset(G(ime.ev), 0, 64); WR32(ime.ev, id);
+ if (id == 1) { WR32(ime.ev + 12, caret); WR32(ime.ev + 16, ime.buf); }
+ if (ime.handler) guest_call(c, ime.handler, ime.arg, ime.ev);
 }
 static void h_ime_open(Cpu *c) {
-	if (!A0) { RET(0x80100702u); return; }
-	if (ime.open) { RET(0x80100701u); return; }
-	ime.arg = RD32(A0 + 0x20); ime.handler = RD32(A0 + 0x24); ime.init = RD32(A0 + 0x2c); ime.maxlen = RD32(A0 + 0x30); ime.buf = RD32(A0 + 0x34);
-	if (!ime.ev) ime.ev = guest_alloc(64, 16);
-	ime.open = 1; ime.step = 0;
-	fprintf(stderr, "    ime: keyboard opened (handler %#x, max %u chars)\n", ime.handler, ime.maxlen);
-	RET(0);
+ if (!A0) { RET(0x80100702u); return; }
+ pthread_mutex_lock(&ime_mu);
+ /* Done by Codex. A completed interactive request no longer owns input, even
+  * if the guest defers Close until the next trip through the naming screen. */
+ if (ime.open && (!ime.interactive || ime.phase < 4)) {
+  pthread_mutex_unlock(&ime_mu); RET(0x80100701u); return;
+ }
+ ime.arg = RD32(A0 + 0x20); ime.handler = RD32(A0 + 0x24); ime.init = RD32(A0 + 0x2c); ime.maxlen = RD32(A0 + 0x30); ime.buf = RD32(A0 + 0x34);
+ if (!ime.ev) ime.ev = guest_alloc(64, 16);
+ const char *title = getenv("RECOMP_TITLE");
+ ime.interactive = title && !strcmp(title, "PCSG00351") && !getenv("RECOMP_HEADLESS") && overlay_ime_available();
+ ime.open = 1; ime.step = ime.response = ime.phase = 0; if (!++ime.seq) ++ime.seq;
+ uint32_t n = 0, limit = ime_limit();
+ if (ime.init) while (n < limit && RD16(ime.init + 2*n)) { ime.initial[n] = RD16(ime.init + 2*n); n++; }
+ if (n && ime.initial[n-1] >= 0xd800 && ime.initial[n-1] <= 0xdbff) n--;
+ ime.initial[n] = 0; ime_to_utf8(ime.initial, ime.text, sizeof ime.text);
+ pthread_mutex_unlock(&ime_mu);
+ fprintf(stderr, "    ime: keyboard opened (handler %#x, max %u chars)\n", ime.handler, ime.maxlen); RET(0);
 }
 static void h_ime_update(Cpu *c) {
-	if (!ime.open) { RET(0); return; }
-	const int s = ime.step++;
-	if (s == 0) ime_event(c, 0, 0);
-	else if (s == 2) { char shown[64]; uint32_t n = ime_fill(ime.init, ime.buf, ime.maxlen, shown); ime_event(c, 1, n); fprintf(stderr, "    ime: typed \"%s\"\n", shown); }
-	else if (s == 10) { ime_event(c, 5, 0); fprintf(stderr, "    ime: Enter\n"); }
-	RET(0);
+ pthread_mutex_lock(&ime_mu);
+ if (!ime.open) { pthread_mutex_unlock(&ime_mu); RET(0); return; }
+ int interactive = ime.interactive, s = ime.step++, response = ime.response, phase = ime.phase;
+ uint16_t result[IME_UNITS+1];
+ if (interactive && response && phase == 0 && s >= 2) { memcpy(result, ime.result, sizeof result); ime.phase = 1; }
+ else if (interactive && response && phase > 0 && phase < 3) ime.phase++;
+ pthread_mutex_unlock(&ime_mu);
+ if (!interactive) {
+  if (s == 0) ime_event(c, 0, 0);
+  else if (s == 2) {
+   char shown[64]; uint32_t n = ime_fill(ime.init, ime.buf, ime.maxlen, shown);
+   ime_event(c, 1, n); fprintf(stderr, "    ime: typed \"%s\"\n", shown);
+  } else if (s == 10) { ime_event(c, 5, 0); fprintf(stderr, "    ime: Enter\n"); }
+ } else if (s == 0) ime_event(c, 0, 0);
+ else if (response && phase == 0 && s >= 2) {
+  uint32_t n = 0; if (ime.buf) { while (result[n]) { WR16(ime.buf + 2*n, result[n]); n++; } WR16(ime.buf + 2*n, 0); }
+  ime_event(c, 1, n);
+ } else if (response && phase == 3) {
+  pthread_mutex_lock(&ime_mu);
+  ime.phase = 4;
+  pthread_mutex_unlock(&ime_mu);
+  ime_event(c, response == 2 ? 4 : 5, 0);
+  fprintf(stderr, "    ime: name entry %s\n", response == 2 ? "canceled" : "confirmed");
+ }
+ RET(0);
 }
-static void h_ime_close(Cpu *c) { ime.open = 0; RET(0); }
+static void h_ime_close(Cpu *c) { pthread_mutex_lock(&ime_mu); ime.open = 0; pthread_mutex_unlock(&ime_mu); RET(0); }
 static void h_ime_dialog_status(Cpu *c) { RET((uint32_t)ime_state); }
 static void h_ime_dialog_result(Cpu *c) { if (!A0) { RET(0x80020402u); return; } memset(G(A0), 0, 36); WR32(A0 + 4, 2); RET(0); }   /* result 0, button ENTER */
 static void h_ime_dialog_term(Cpu *c) { ime_state = 0; RET(0); }

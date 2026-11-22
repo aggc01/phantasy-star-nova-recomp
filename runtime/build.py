@@ -20,6 +20,7 @@ RECOMP_CPU=native (the default; a cross build is always generic) | generic | <a 
 for; objects per processor in obj_<name>/ (obj_apple-m4, obj_win_znver5). RECOMP_CFLAGS: more code generation flags.
 """
 import concurrent.futures
+import filecmp
 import glob
 import hashlib
 import os
@@ -190,7 +191,8 @@ def main(argv):
     # would no longer match its signature). Each object is written to a temporary and renamed into place (whole or not
     # at all), so two builds of one title never see a half-written .o.
     IMGUI = os.path.join(ROOT, "third_party", "imgui"); IMGUIOBJ = os.path.join(OBJ, "imgui"); os.makedirs(IMGUIOBJ, exist_ok=True)
-    CXXFLAGS = ["-O2", "-std=c++17", "-w", "-I", IMGUI, "-I", os.path.join(IMGUI, "backends")] + INCLUDES + sdl_cflags
+    # Done by Codex. Preserve supplementary Unicode characters from SDL text input.
+    CXXFLAGS = ["-O2", "-std=c++17", "-DIMGUI_USE_WCHAR32", "-w", "-I", IMGUI, "-I", os.path.join(IMGUI, "backends")] + INCLUDES + sdl_cflags
     if WIN: CXXFLAGS += ["-D_FILE_OFFSET_BITS=64", "-include", os.path.join(RT, "platform", "win32_compat.h")]
     imgui_srcs = [os.path.join(IMGUI, f) for f in ("imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp", os.path.join("backends", "imgui_impl_sdl3.cpp"), os.path.join("backends", "imgui_impl_sdlgpu3.cpp"))] + [os.path.join(RT, "ui", "overlay.cpp")]
     # the touch card's input icons (third_party/kenney-prompts/prompts.png) as bytes overlay.cpp includes: a game's binary
@@ -204,7 +206,8 @@ def main(argv):
     CXXFLAGS += ["-I", IMGUIOBJ]
     for s in imgui_srcs:
         o = os.path.join(IMGUIOBJ, os.path.splitext(os.path.basename(s))[0] + ".o")
-        if not os.path.isfile(o) or newer(s, o) or newer(os.path.join(RT, "ui", "overlay.h"), o) or (s.endswith("overlay.cpp") and newer(PROMPTS_H, o)):
+        overlay_deps = (PROMPTS_H, os.path.join(RT, "core", "ime.h"), os.path.join(RT, "ui", "nova_save_display.h"))
+        if not os.path.isfile(o) or newer(s, o) or newer(__file__, o) or newer(os.path.join(RT, "ui", "overlay.h"), o) or (s.endswith("overlay.cpp") and any(newer(dep, o) for dep in overlay_deps)):
             work.append(([CXX, "-c"] + CXXFLAGS + [s, "-o", f"{o}.{os.getpid()}"], s, o, CXX, True))
 
     def compile_one(w):
@@ -267,7 +270,7 @@ def main(argv):
     if ENV.get("RECOMP_GAME_ADDRS"): ENVDEF.append(f'-DRECOMP_GAME_ADDRS="{ENV["RECOMP_GAME_ADDRS"]}"')
     host = [part(f) for f in (
         "main hle libc io sysmem apputil fios psarc gxp_index kernel gpu video display gesture gxm_sony usse usse_spirv gfx_soft gfx_gpu "
-        "gfx_dispatch gfx_coverage gfx_capture guestwatch metrics settings hooks motion window gpulock ngs stallprof waitstats memscan jpeg camera post "
+        "gfx_dispatch gfx_coverage gfx_capture guestwatch metrics settings hooks motion window save_backups gpulock ngs stallprof waitstats memscan jpeg camera post "
         "ssao fsr/fsr net np http sha1 ssl_local online/m2_server online/m2_wire online/m2_rooms online/m2_proxy online/discovery online/basic_msg online/stun online/overlay online/dht online/upnp online/aes128 online/status online/crypto").split()]
     # the game's own host code (vitarecomp: every .c in packs/<title>/), in this game's build alone
     host += [f for f in (ENV.get("RECOMP_PACK_SOURCES") or "").split(os.pathsep) if f]
@@ -278,7 +281,11 @@ def main(argv):
     r = subprocess.run(link)
     if r.returncode: return r.returncode
     def beside(src):   # SDL copied next to the binary, replaced whole: a game still running keeps the file it loaded
-        dst = os.path.join(os.path.dirname(OUT), os.path.basename(src)); tmp = dst + f".new{os.getpid()}"
+        dst = os.path.join(os.path.dirname(OUT), os.path.basename(src))
+        # Done by Codex. Windows can have the installed DLL mapped while a second host is built.
+        if os.path.isfile(dst) and filecmp.cmp(src, dst, shallow=False):
+            return
+        tmp = dst + f".new{os.getpid()}"
         shutil.copyfile(src, tmp); os.replace(tmp, dst)
     if WIN: beside(os.path.join(SDLW, "bin", "SDL3.dll"))
     if LT: beside(os.path.join(LT, "SDL3", "lib", "libSDL3.so.0"))   # (what -rpath $ORIGIN finds)

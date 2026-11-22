@@ -1319,13 +1319,51 @@ void kernel_notify_callback(uint32_t uid, uint32_t count, uint32_t arg) { Obj *o
 int kernel_callback_valid(uint32_t uid) { return by_uid(uid, CALLBACK) != 0; }
 /* sleep until a CLOCK_MONOTONIC time, running this thread's callbacks as they are notified
  * (DelayThreadCB, the display's CB waits) */
+/* The last CB_SLEEP_TAIL_US of a sleep are slept precisely: high-resolution sleeps (plat_sleep_ns) of at most 250 us, the
+ * callbacks checked between them. The condition variable's timed wait alone rounds to the platform's timer (Windows:
+ * whole milliseconds, up to a 15.6 ms tick): Phantasy Star Nova polls with DelayThreadCB(200 us) loops (fn_81af7abe) and
+ * its main thread lost 19-30 ms a frame to them, and its vblank callback (vb_wait_until_cb) was delivered 0.4-1.4 ms late,
+ * twice 10-15 ms (2026-11-19, docs/psnova/frame-rate.md). RECOMP_CB_SLEEP_COARSE=1: the timed wait alone, as before.
+ * The time counts as a sleep in RECOMP_WAIT_STATS (as h_delay's).
+ * The tail is 20 ms (RECOMP_CB_SLEEP_TAIL_US), longer than one Windows tick: winpthreads' timed wait waits again while
+ * GetTickCount64() < its end, and GetTickCount64 moves in ~15.6 ms steps whatever timeBeginPeriod says, so a timed wait
+ * can come back up to a tick late -- with a 2 ms tail (until 2026-11-19 evening) about 31 % of the VSync thread's
+ * WaitVblankStartCB returns came 2-16 ms late (test62), and an overshoot past the tail skipped the precise part. With
+ * 20 ms a vblank wait (16.7 ms) never enters the timed wait, and a longer sleep's overshoot lands inside the tail.
+ * Slices of at most 1 ms there (250 us in the last 1.25 ms): a callback notified meanwhile runs within ~1 ms
+ * (another port of Phantasy Star Nova found the same and uses 20 ms; docs/psnova/external-fix-list-check.md). */
+static uint64_t cb_sleep_tail_us(void) {
+	static long v = -1;
+	if (v < 0) { const char *e = getenv("RECOMP_CB_SLEEP_TAIL_US"); v = e && *e ? atol(e) : 20000; if (v < 0) v = 0; }
+	return (uint64_t)v;
+}
+#define CB_SLEEP_TAIL_US cb_sleep_tail_us()
 void kernel_cb_sleep(Cpu *c, uint64_t until_us) {
 	Thread *t = SELF();
+	static int coarse = -1; if (coarse < 0) coarse = getenv("RECOMP_CB_SLEEP_COARSE") != 0;
+	const uint64_t ws_t0 = waitstats_on() ? waitstats_now() : 0;
+	if (ws_t0) waitstats_begin(ws_t0);
 	for (;;) {
 		uint64_t now = mono_us();
-		if (until_us <= now) return;
+		if (until_us <= now) break;
 		uint64_t left = until_us - now;
-		if (in_callbacks) { int b = sched_block_begin(); usleep((useconds_t)left); if (b) sched_block_end(); return; }   /* no nesting: a plain sleep */
+		if (in_callbacks) { int b = sched_block_begin(); usleep((useconds_t)left); if (b) sched_block_end(); break; }   /* no nesting: a plain sleep */
+		if (!coarse && left <= CB_SLEEP_TAIL_US) {   /* the precise tail: off the run slot the whole way (RECOMP_SCHED), back on it only
+			                                          * to run callbacks (guest code) or to return -- per slice, a busy core made the
+			                                          * sleeper queue for a slot just to read the clock (review, 2026-11-19) */
+			int b = sched_block_begin(), pending = 0;
+			for (;;) {
+				pthread_mutex_lock(&cblock); pending = cb_pending(t); pthread_mutex_unlock(&cblock);
+				if (pending) break;
+				now = mono_us(); if (until_us <= now) break;
+				left = until_us - now;
+				plat_sleep_ns((left > 1250 ? 1000 : left > 250 ? 250 : left) * 1000u);
+			}
+			if (b) sched_block_end();
+			if (pending) { run_callbacks(c); continue; }
+			break;
+		}
+		if (!coarse) left -= CB_SLEEP_TAIL_US;   /* the timed wait to the start of the tail */
 		struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
 		ts.tv_sec += (time_t)(left / 1000000); ts.tv_nsec += (long)((left % 1000000) * 1000);
 		if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
@@ -1340,6 +1378,7 @@ void kernel_cb_sleep(Cpu *c, uint64_t until_us) {
 		if (b) sched_block_end();   /* the callbacks are guest code: they run on a slot */
 		if (pending) run_callbacks(c);
 	}
+	if (ws_t0) waitstats_sleep(ws_t0);
 }
 /* a *CB system call: the pending callbacks first (the kernel delivers them before the wait
  * begins), then the operation, repeated with the time left each time a callback interrupted it */

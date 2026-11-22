@@ -205,6 +205,11 @@ static int host_preferred(const char *n) {
 	 * environment: the host keeps them -- its own sign-in tickets (np.c) and the retail "np" (np_common's own is set by a
 	 * shell service that isn't there, "rc" without it) */
 	if (!strncmp(n, "sceNpAuth", 9) || !strcmp(n, "sceNpCommonGetNpEnviroment")) return 1;
+	/* Done by Codex. The firmware save probe uses the existing handlers for
+	 * the unrelated dialogs Nova visits on the way to the title menu. */
+	if ((!strncmp(n, "sceNpTrophySetupDialog", 22) || !strncmp(n, "sceNetCheckDialog", 17) ||
+	     !strncmp(n, "sceMsgDialog", 12) || !strncmp(n, "SceCommonDialog_", 16) ||
+	     !strncmp(n, "sceImeDialog", 12)) && export_addr("__recomp_start_libcdlg_main")) return 1;
 	/* np_matching2's TLS to this copy's own matching service: plain bytes (ssl_local.c); to a chosen server, Sony's libssl */
 	extern int matching_local(void);
 	if ((!strncmp(n, "SceSslInternal_", 15) || !strncmp(n, "sceSslInternal", 14)) && matching_local()) return 1;
@@ -346,6 +351,20 @@ void recomp_call_external(Cpu *c, uint32_t addr) {
 	}
 	uint32_t target; unsigned fl;
 	HleFn fn = hle_resolve(addr, name, &target, &fl);
+	/* Done by Codex. The optional list probe isolates a first native open from
+	 * the boot-time save dialog, while keeping each session on one backend. */
+	if (target && !strncmp(name, "sceSaveDataDialog", sizeof "sceSaveDataDialog" - 1) &&
+	    getenv("RECOMP_FIRMWARE_SAVE_LIST_ONLY") && export_addr("__recomp_start_libcdlg_main")) {
+		static int native_list;
+		if (!strcmp(name, "sceSaveDataDialogInit")) {
+			int list = c->r[0] && RD32(c->r[0] + 0x50) == 2;
+			__atomic_store_n(&native_list, list, __ATOMIC_RELEASE);
+		}
+		if (!__atomic_load_n(&native_list, __ATOMIC_ACQUIRE)) {
+			target = 0;
+			fn = hle_find(name);
+		}
+	}
 	if (fl & RF_LONGJMP) recomp_longjmp(c);   /* (returns only to fall back) */
 	if (fl & RF_SETJMP) { static int warned; if (!warned++) fprintf(stderr, "setjmp called through a pointer (lr %#x): a longjmp to it can't unwind\n", c->r[14]); }
 	if (target) {   /* a loaded module's export: its recompiled code */
@@ -448,7 +467,9 @@ void recomp_call_external(Cpu *c, uint32_t addr) {
 			while (!hit && (p = strchr(p, ',')) && p[1]) { const char *q = strchr(p + 1, ','); char item[96]; size_t n = q ? (size_t)(q - p - 1) : 0;
 				if (n && n < sizeof item) { memcpy(item, p + 1, n); item[n] = 0; hit = strstr(name, item) != 0; } p = q; }
 			if (hit) { char tn[32] = ""; plat_thread_name(tn, sizeof tn); extern uint64_t display_frames(void);
-				fprintf(stderr, "    imp f%llu [%s] %s(%#x, %#x, %#x, %#x) -> %#x lr %#x\n", (unsigned long long)display_frames(), tn, name, a0, a1, a2, a3, c->r[0], c->r[14]); }
+				struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);   /* when it returned and which thread (its Cpu): a timeline across threads */
+				fprintf(stderr, "    imp f%llu [%s] %s(%#x, %#x, %#x, %#x) -> %#x lr %#x t %.3f c %p\n", (unsigned long long)display_frames(), tn, name, a0, a1, a2, a3, c->r[0], c->r[14],
+				        (double)ts.tv_sec * 1e3 + ts.tv_nsec / 1e6, (void *)c); }
 		}
 	}
 	if (recomp_sched_on) sched_yield_if_preempted();

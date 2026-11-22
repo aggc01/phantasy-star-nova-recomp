@@ -53,8 +53,18 @@ inline ImFont *load_system_font(ImGuiIO &io) {
 	static const char *const faces[] = {"/System/Library/Fonts/SFNS.ttf", "/System/Library/Fonts/Helvetica.ttc", "C:\\Windows\\Fonts\\segoeui.ttf",
 		"/usr/share/fonts/noto/NotoSans-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
 		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/cantarell/Cantarell-VF.otf", 0};
-	for (int i = 0; faces[i]; i++) { struct stat st; if (stat(faces[i], &st) == 0) if (ImFont *f = io.Fonts->AddFontFromFileTTF(faces[i])) return f; }
-	return io.Fonts->AddFontDefaultVector();
+	ImFont *font = nullptr;
+	for (int i = 0; faces[i] && !font; i++) { struct stat st; if (stat(faces[i], &st) == 0) font = io.Fonts->AddFontFromFileTTF(faces[i]); }
+	if (!font) return io.Fonts->AddFontDefaultVector();
+	/* a Japanese face merged in for the glyphs the UI face lacks: a Japanese game's own words reach the menus (the save
+	 * dialog's and the Saves page's slot texts, "Nova/ハンターLv1"), which showed as boxes in Segoe UI. ImGui reads the whole
+	 * file at start (MS Gothic 9 MB, the smallest Windows Japanese face; Yu Gothic would be 14) and rasterises glyphs only
+	 * when one is drawn. Japanese faces only: a Chinese one draws Japanese kanji in Chinese forms */
+	static const char *const cjk[] = {"C:\\Windows\\Fonts\\msgothic.ttc", "C:\\Windows\\Fonts\\meiryo.ttc", "C:\\Windows\\Fonts\\YuGothM.ttc",
+		"/System/Library/Fonts/\xE3\x83\x92\xE3\x83\xA9\xE3\x82\xAE\xE3\x83\x8E\xE8\xA7\x92\xE3\x82\xB4\xE3\x82\xB7\xE3\x83\x83\xE3\x82\xAF W3.ttc",   /* (Hiragino Kaku Gothic W3, its name in UTF-8) */
+		"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", 0};
+	for (int i = 0; cjk[i]; i++) { struct stat st; if (stat(cjk[i], &st) == 0) { ImFontConfig cfg; cfg.MergeMode = true; if (io.Fonts->AddFontFromFileTTF(cjk[i], 0.0f, &cfg)) break; } }
+	return font;
 }
 
 inline bool primary_button(const char *label, ImVec2 size = ImVec2(0, 0)) {   /* the one amber button a view offers */
