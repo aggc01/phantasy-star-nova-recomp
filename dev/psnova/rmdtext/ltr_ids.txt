@@ -1,0 +1,3 @@
+# Arabic messages that keep their box's own (left) alignment: no 0x8095 mark (build step: export of ar_menus.json).
+# One id or range per line, then a reason. Seen in the game, test 5 (2026-11-19).
+10801-10811	weapon type names in the class box: each sits right of its weapon icon; right-aligned they float away from it

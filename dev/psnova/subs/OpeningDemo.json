@@ -1,0 +1,21 @@
+{
+  "movie": "OpeningDemo",
+  "credit": "Done by Codex. English wording supplied by the user.",
+  "lines": [
+    {
+      "start": 12.75,
+      "end": 19.90,
+      "en": "Attention, Delta and all units.\nOur ship will soon arrive at Planet Wakua."
+    },
+    {
+      "start": 19.90,
+      "end": 22.00,
+      "en": "Begin deployment of the first exploration team."
+    },
+    {
+      "start": 22.00,
+      "end": 24.50,
+      "en": "Initiate the descent sequence."
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+ "_note": "First in-game Arabic test (2026-11-18): messages seen on the scripted route (character creation, Rietheia in the corridor). Arabic written by Claude as placeholders; mode word = one picture per word, form = one picture per joined letter form.",
+ "500001": {"mode": "form", "text": "اختر العرق والجنس", "english": "Select Race and Sex"},
+ "500002": {"mode": "word", "text": "اختر الفئة", "english": "Select Class"},
+ "170111": {"mode": "form", "text": "أنشئ شخصيتك.", "english": "Create a character."},
+ "170112": {"mode": "word", "text": "اختر عرق شخصيتك وجنسها.", "english": "Choose your race and sex."},
+ "170113": {"mode": "form", "text": "اختر فئة شخصيتك (مهنتها).", "english": "Select your class."},
+ "500111": {"mode": "word", "text": "سيتم التسجيل بهذا الاسم.\n\nهل أنت متأكد؟", "english": "Do you want to register this name?"},
+ "30008": {"mode": "form", "text": "ريتيا", "english": "Rietheia"},
+ "100010020040008": {"mode": "word", "text": "أنا ريتيا، من الطاقم الطبي في السفينة\n«دلتا فاليانت» التابعة لفريق أركس الخاص\nلاستكشاف الكواكب «ألتر».", "english": "This ship is the Delta Valiant..."},
+ "100010020050008": {"mode": "form", "text": "سنجري الآن فحصًا بسيطًا لذاكرتك.", "english": "Let's check to ensure that your memory is in working order."},
+ "100010020070008": {"mode": "word", "text": "هل تتذكر ذلك؟", "english": "Do you remember any of this?"},
+ "100010020110008": {"mode": "form", "text": "وأنت كنت واحدًا منهم أيضًا.", "english": "You and I are both part of that crew."}
+}
