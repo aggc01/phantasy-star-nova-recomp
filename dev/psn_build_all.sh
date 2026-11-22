@@ -1,8 +1,10 @@
 #!/bin/bash
 # import -> analyze -> recompile -> build for PCSG00351, each stage logged (dev/psn-logs/<stage>.log)
 cd "$(dirname "$0")/.."
-PY="${PY:-/f/Antigravity Proj/Recomp-decomp/recent recomps/Uncharted Golden Abyss Recomp/.venv/Scripts/python.exe}"
-export ATIV_WIN_TOOLCHAIN="${ATIV_WIN_TOOLCHAIN:-F:/Antigravity Proj/Recomp-decomp/recent recomps/Uncharted Golden Abyss Recomp/toolchain}"
+# the project's own Python and toolchain, inside this folder (2026-11-19: separated from the Uncharted checkout; tools/python +
+# .venv made from it, toolchain/ = a copy; docs/psnova/separation-from-uncharted.md)
+PY="${PY:-$PWD/.venv/Scripts/python.exe}"
+export ATIV_WIN_TOOLCHAIN="${ATIV_WIN_TOOLCHAIN:-$PWD/toolchain}"
 for s in ${STAGES:-import analyze recompile build}; do
   t0=$(date +%s)
   "$PY" pipeline/vitarecomp.py $s PCSG00351 > dev/psn-logs/$s.log 2>&1; rc=$?

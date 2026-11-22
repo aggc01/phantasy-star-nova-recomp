@@ -482,6 +482,25 @@ def cmd_import(g, src):
         run([PY, os.path.join(DECRYPT, "fself2elf.py"), src, os.path.join(W, "elf")])
         if os.path.isdir(os.path.join(src, "sce_module")): run([PY, os.path.join(DECRYPT, "fself2elf.py"), os.path.join(src, "sce_module"), os.path.join(W, "elf")])
         if os.path.isdir(os.path.join(src, "data")): shutil.copytree(os.path.join(src, "data"), os.path.join(app0, "data"), symlinks=True, dirs_exist_ok=True)
+    # language overlays (2026-11-19): $W/lang/<code>/ (files laid out as app0, plus a language.txt with the name the
+    # menu shows) -> fs/lang/<code>, each a link; the runtime swaps in a file of the language the "language" setting
+    # names (runtime/core/io.c host_lang). Links whose language folder is gone are removed.
+    lsrc, ldst = os.path.join(W, "lang"), os.path.join(OUT, "fs", "lang")
+    if os.path.isdir(lsrc) or os.path.isdir(ldst):
+        os.makedirs(ldst, exist_ok=True)
+        have = sorted(d for d in os.listdir(lsrc) if os.path.isdir(os.path.join(lsrc, d))) if os.path.isdir(lsrc) else []
+        for d in os.listdir(ldst):
+            p = os.path.join(ldst, d)
+            if d not in have and (os.path.islink(p) or _is_junction(p)): rmtree(p)
+        for d in have:
+            p = os.path.join(ldst, d)
+            if os.path.islink(p) or _is_junction(p) or not os.path.lexists(p): link_dir(os.path.realpath(os.path.join(lsrc, d)), p)
+        # default.txt (first word: a language folder's name; none = the game's own): the language a player gets until they
+        # choose one in the menu -- copied, so editing $W/lang/default.txt and importing again changes it
+        dsrc, ddst = os.path.join(lsrc, "default.txt"), os.path.join(ldst, "default.txt")
+        if os.path.isfile(dsrc): shutil.copyfile(dsrc, ddst)
+        elif os.path.isfile(ddst): os.remove(ddst)
+        if have: say(f"{g.T}: language overlays {', '.join(have)} -> {ldst}" + (f", default {head1(dsrc).split()[0] if head1(dsrc).split() else 'the game own'}" if os.path.isfile(dsrc) else ""))
     # VERSIONS (packs/<title>/pack.toml): the builds the pack's hooks and addresses were made for -- another version or region
     # would mis-hook, so say so here rather than crash later; which one this is goes to $W/version, for the pack's per-version settings
     if g.VERSIONS:
@@ -639,10 +658,18 @@ def tee_run(argv, env, cwd, log_path):
     with open(log_path, "wb") as log:
         p = start_game(argv, env=env, cwd=cwd, stderr=subprocess.PIPE)
         def pump():
-            err = getattr(sys.stderr, "buffer", None)
+            # the terminal gets whole characters only: raw chunks cut a UTF-8 character in two at a read boundary, and
+            # Python's Windows console writer then loops forever on the half character (100 % of a core, nothing more
+            # read from the pipe, the game blocked in its next log line: PS Nova froze at its save list, whose slot names
+            # are Japanese, 2026-11-20). A terminal that refuses a write is dropped; the log still gets every byte.
+            import codecs
+            err = sys.stderr
+            dec = codecs.getincrementaldecoder("utf-8")("replace")
             for b in iter(lambda: p.stderr.read1(65536) if hasattr(p.stderr, "read1") else p.stderr.read(4096), b""):
                 log.write(b); log.flush()
-                if err: err.write(b); err.flush()
+                if err:
+                    try: err.write(dec.decode(b)); err.flush()
+                    except Exception: err = None
         t = threading.Thread(target=pump, daemon=True); t.start()
         try: rc = p.wait()
         except KeyboardInterrupt: p.terminate(); rc = p.wait()
@@ -672,6 +699,12 @@ def cmd_run(g, frames):
     try:
         if os.path.isfile(os.path.join(OUT, "session.log")): os.replace(os.path.join(OUT, "session.log"), os.path.join(OUT, "session.prev.log"))
         e = game_env(g, g.RUN_ENV.split() + (ENV.get("EXTRA_ENV") or "").split(), fixed)
+        if g.TITLE_ID == "PCSG00351":
+            # Done by Codex. Sample Nova's GPU queue and thread waits during normal play.
+            e.setdefault("RECOMP_GPU_FENCE_STATS", "1")
+            e.setdefault("RECOMP_WAIT_STATS", "120")
+            e.setdefault("RECOMP_METRICS", "1")
+            e.setdefault("RECOMP_PSN_FPS_TRACE", "1")
         rc = tee_run(g.exe_argv(os.path.join(OUT, g.EXE)) + [g.BASE + ".img", g.entry(), frames or "100000000000"], e, OUT, os.path.join(OUT, "session.log"))
     finally:
         if ENV.get("ATIV_POST_EXIT"): subprocess.run(ENV["ATIV_POST_EXIT"], shell=True)
@@ -685,7 +718,19 @@ def fresh_fs(g, td):
     for f in glob.glob(os.path.join(glob.escape(td), "shot_*.ppm")): os.remove(f)
     rmtree(os.path.join(td, "fs")); rmtree(os.path.join(td, "settings.ini"))
     os.makedirs(os.path.join(td, "fs"))
-    link_dir(os.path.join(g.OUT, "fs", "app0"), os.path.join(td, "fs", "app0"), relative=os.path.join("..", "..", "fs", "app0"))
+    # TEST_APP0=<folder>: this test plays that copy of app0 instead of fs/app0 (a layered test copy, e.g. a localization
+    # build, without re-pointing the shared fs/app0 that other sessions' runs use; 2026-11-18)
+    if ENV.get("TEST_APP0"):
+        link_dir(os.path.abspath(ENV["TEST_APP0"]), os.path.join(td, "fs", "app0"))
+    else:
+        link_dir(os.path.join(g.OUT, "fs", "app0"), os.path.join(td, "fs", "app0"), relative=os.path.join("..", "..", "fs", "app0"))
+    # the language overlays (runtime/core/io.c host_lang): a test plays the game's own (Japanese) text unless TEST_LANG names
+    # a folder of them (TEST_LANG=game: the game's fs/lang, with its default.txt); pick one with EXTRA_ENV="RECOMP_LANGUAGE=
+    # <code>" -- so scripted routes stay comparable whatever default the player build has (2026-11-19)
+    if ENV.get("TEST_LANG"):
+        lang = os.path.join(g.OUT, "fs", "lang") if ENV["TEST_LANG"] == "game" else os.path.abspath(ENV["TEST_LANG"])
+        if not os.path.isdir(lang): die(f"TEST_LANG: no folder {lang}")
+        link_dir(os.path.realpath(lang), os.path.join(td, "fs", "lang"))
 
 
 def test_timeout(g):   # a scripted run's limit in seconds: TIMEOUT for one run, else the pack's TEST_TIMEOUT, else 300
