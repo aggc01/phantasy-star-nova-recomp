@@ -29,3 +29,10 @@ dev/psn-logs/
 # ... and pictures of the game (screenshots, atlases rendered from its files): the game's own imagery stays local
 docs/psnova/*.png
 dev/psnova/rmd/samples/
+# local rollback copies made before risky edits (kept on disk, never committed)
+pipeline/vitarecomp.py.before-tee-fix
+runtime/gfx/gfx_dispatch.c.before-deferdraws
+runtime/gfx/gfx_gpu.c.before-depthclip
+runtime/gfx/gfx_gpu.c.before-gpulines
+dev/psnova/rmdtext/rmdlib_v1_before_8082fix.py
+dev/psnova/uitex/specwork/apply_spec.before-bc1.py
