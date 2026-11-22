@@ -33,6 +33,38 @@ void recomp_hook_psn_pad_update(Cpu *c) {
 }
 
 /*
+ * 60 fps (2026-11-19; docs/psnova/60fps-sites.md, docs/psnova/frame-rate.md). The engine is built for 60: its vsync
+ * object T = *0x82474314 is constructed with T+0xcc = 60 (fn_81a242bc), and the frame limiter fn_81a24692 waits
+ * uidiv(60, T+0xcc) vblanks. One boot-time function, fn_8178c3e4, sets this game to 30 (`movs r1,#0x1e; str.w r1,
+ * [r0,#0xcc]` at 0x8178c5f2) and its cloth/physics step 0x82474334 to 1/31 (0x3d042108; the data default is 0.016,
+ * 0x3c83126f). Game time comes from measured vblanks (T+0x8c, 1/count, seconds), so nothing runs double speed.
+ * psn_frame_rate, at the entry of the per-frame task fn_81a7756c (the limiter's only caller, at 0x81a775b6): with the
+ * frame_rate setting at 60 it writes 60 and 0.016; switched back to 30, it restores the game's own 30 and 1/31. It reads
+ * the setting every frame, so the F10 menu (or RECOMP_FRAME_RATE / RECOMP_FRAME_RATE_FROM) applies at once. At 30, until
+ * a switch, it writes nothing: the game's own code runs untouched.
+ */
+void recomp_hook_psn_frame_rate(Cpu *c) {
+	(void)c;
+	static int last = 30;
+	const int want = display_frame_rate_60() ? 60 : 30;
+	{	/* RECOMP_PSN_FPS_TRACE=1: every 300th frame, what the game's clock measured for the frame before (T+0x8c vblanks, T+0xb0 seconds) */
+		static int tr = -1; if (tr < 0) tr = getenv("RECOMP_PSN_FPS_TRACE") != 0;
+		static unsigned n; const uint32_t t0 = RD32(0x82474314u);
+		if (tr && t0 && n++ % 300 == 0) { uint32_t s = RD32(t0 + 0xb0); float f; memcpy(&f, &s, 4);
+			fprintf(stderr, "    psn clock: frame %llu target %u fps, last frame %u vblanks = %.4f s\n", (unsigned long long)display_frames(), RD32(t0 + 0xcc), RD16(t0 + 0x8c), f); }
+	}
+	if (want == 30 && last == 30) return;
+	const uint32_t t = RD32(0x82474314u);
+	if (!t) return;
+	WR32(t + 0xcc, (uint32_t)want);
+	static uint32_t step60 = 0;   /* RECOMP_PSN_60_STEP=<hex float bits>: the step written at 60 instead of 0.016 (a test switch: 0x3d042108 keeps the game's 1/31) */
+	if (!step60) { const char *e = getenv("RECOMP_PSN_60_STEP"); step60 = e && *e ? (uint32_t)strtoul(e, 0, 16) : 0x3c83126fu; if (!step60) step60 = 0x3c83126fu; }
+	WR32(0x82474334u, want == 60 ? step60 : 0x3d042108u);   /* 0.016 (the data default) / 1/31 (the game's 30 fps value) */
+	if (want != last) fprintf(stderr, "    psn frame rate: %d fps (frame %llu)\n", want, (unsigned long long)display_frames());
+	last = want;
+}
+
+/*
  * The abort after "Start the Game" (2026-11-18): an Aska worker calls fn_81b2a8bc, a std::map/set insert (MS STL:
  * "if (size >= max_size) _Xlength_error"; max_size 0x071c71c6 = 36-byte nodes), on a tree whose size field (+8) reads
  * >= 0x071c71c6, so the game aborts. psn_tree_insert (its entry) prints the tree and its caller when the size is that
@@ -53,3 +85,47 @@ void recomp_hook_psn_tree_insert(Cpu *c) {
 	plat_backtrace(stderr);
 }
 
+
+/*
+ * Arabic right alignment (localization session, 2026-11-19; docs/psnova/right-alignment-research.md). Every UI text box
+ * has an alignment at box+0x94 (0 left, 1 centre, 2 right) that the line-placement routine fn_81905ae0 reads at
+ * 0x81905b10 (x = 0 / (box - line) / 2 / box - line); most boxes have no Align in their .crbpj and stay left. Our encoder
+ * starts every Arabic message with the control code 0x8095 (bytes 95 80), a no-op in all five text decoders.
+ * psn_rtl_mark (entry of the message layouts fn_817e850e / fn_817e882e): remember, per text-output block (RD32(sp) =
+ * box+0xa4), whether the message laid out there starts with 95 80 -- every layout rewrites it, so a box that later shows a
+ * non-Arabic message is cleared. psn_rtl_align (after 0x81905b10 ldr r2,[r5,#0x94], r5 = the box): a marked box's
+ * "left" becomes "right"; centred and right-aligned boxes are left alone; guest memory is never written.
+ * Without the mark (Japanese / English text) nothing changes.
+ */
+#define PSN_RTL_N 2048
+static uint32_t psn_rtl_key[PSN_RTL_N]; static volatile uint8_t psn_rtl_val[PSN_RTL_N];
+static int psn_rtl_slot(uint32_t k, int add) {   /* open addressing; keys are box addresses (never 0) */
+	unsigned h = (k >> 2) * 2654435761u % PSN_RTL_N;
+	for (int i = 0; i < PSN_RTL_N; i++, h = (h + 1) % PSN_RTL_N) {
+		uint32_t cur = __atomic_load_n(&psn_rtl_key[h], __ATOMIC_ACQUIRE);
+		if (cur == k) return (int)h;
+		if (!cur) {
+			if (!add) return -1;
+			uint32_t z = 0;
+			if (__atomic_compare_exchange_n(&psn_rtl_key[h], &z, k, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE) || z == k) return (int)h;
+		}
+	}
+	return -1;
+}
+void recomp_hook_psn_rtl_mark(Cpu *c) {
+	uint32_t out = RD32(c->r[13]), obj = c->r[1];
+	if (!out) return;
+	uint32_t hdr = obj ? RD32(obj) : 0, base = obj ? RD32(obj + 8) : 0;
+	uint32_t p = (hdr && base) ? base + RD32(hdr + 8) : 0;
+	int rtl = p && RD8(p) == 0x95 && RD8(p + 1) == 0x80;
+	int s = psn_rtl_slot(out, rtl);
+	if (s >= 0) psn_rtl_val[s] = (uint8_t)rtl;
+	if (rtl && getenv("RECOMP_PSN_RTL_TRACE")) {
+		static unsigned n; if (n++ < 40) fprintf(stderr, "    psn rtl: Arabic message at %#x laid out in box block %#x (frame %llu)\n", p, out, (unsigned long long)display_frames());
+	}
+}
+void recomp_ihook_psn_rtl_align(Cpu *c, int reg) {
+	if (reg != 2 || c->r[2] != 0) return;
+	int s = psn_rtl_slot(c->r[5] + 0xa4, 0);
+	if (s >= 0 && psn_rtl_val[s]) c->r[2] = 2;
+}

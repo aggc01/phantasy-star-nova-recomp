@@ -12,8 +12,9 @@ SPLIT = 100               # ~3x Uncharted's main program (28 MB against 9.5 MB a
 # libsmart: the main program imports from none of them (sceKernelLoadStartModule is answered by the runtime), so they
 # are not loaded, as with Killzone's identical set.
 MODULES = "libc libgxm_es4 libgpu_es4 libscemp4 libsceavplayer"
-RUN_ENV = ""   # play: the GPU renderer, the real clock
-TEST_ENV = "RECOMP_GFX=soft RECOMP_CLOCK=fixed"   # the gate's reference: software renderer, fixed clock. Not RECOMP_SKIP_MOVIES: with the movies skipped (AvPlayer answering "no stream") the title never took Start (2026-11-18); the movies decode fine through the firmware's AvPlayer
+# Done by Codex. Clip near geometry in Nova cutscenes (Kisara bridge and Fildia desert).
+RUN_ENV = "RECOMP_SRGB=1 RECOMP_DEFER_DRAWS=1 RECOMP_GPU_DEPTH_CLIP=1"   # play: the GPU renderer, the real clock. RECOMP_SRGB=1: the textures' and surfaces' gamma (sRGB) modes, as Uncharted, Unit 13 and Killzone have them -- without them cutscene characters came out washed out (Lutina's red outfit pink, black suits grey) and the sky's pink glow saturated to magenta, against the user's real-Vita frames; checked title, creation, movies, arena and the Lutina cutscene (2026-11-19, docs/psnova/cutscene-colours.md). Predicted pipelines are on again (RECOMP_PIPE_PREDICT=0 until 2026-11-19 evening): the 16-18 s black screen at start was usse.c looping over absurd header counts of 9 non-programs in the game's files, not the pipelines; with the counts bounded the pass takes 1.0 s and frame 300 comes at 6.4 s (docs/psnova/external-fix-list-check.md)
+TEST_ENV = "RECOMP_GFX=soft RECOMP_CLOCK=fixed RECOMP_SRGB=1"   # the gate's reference: software renderer, fixed clock. Not RECOMP_SKIP_MOVIES: with the movies skipped (AvPlayer answering "no stream") the title never took Start (2026-11-18); the movies decode fine through the firmware's AvPlayer
 # REPATCH_KEEP: the English rePatch's NOVA_FileList_Vita_patch.cpk replaces the 1.05 update's whole archive and lacks
 # one entry the update added (tex_nova_ui_common.aif, in no other archive): without it the game drew noise on Filldia
 # and its NOW LOADING screen. import builds the rePatch archive plus that entry (vitarecomp.py repatch_keep, 2026-11-18).
@@ -29,5 +30,11 @@ TEST_TIMEOUT = 600
 [versions."1.05"]
 sha256 = "abb45e179726d3021de144a900f912534fa6879061e068228cc0cd55286edcf3"
 status = "recommended"
-HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert"   # diagnostics (hooks.c): the pad device's update (RECOMP_PSN_INPUT_TRACE=1); the map insert that aborts after Start the Game
-IHOOKS = "0x81a1f284:psn_input_slot"   # diagnostics: each device slot the input thread's loop loads
+# FUNCTION_SEEDS: functions the analysis misses (2026-11-19 evening, docs/psnova/external-fix-list-check.md). 0x81e53e70: a
+# varargs prologue (mov ip, sp; push.w {r0-r3}) after bx lr; its pointer is built in FUN_814ef956 through a register copy
+# the movw/movt tracker doesn't follow, and stored in a Function object (the push.w at 0x81e53e76 was found). The ARM five:
+# two switch heads (uxth ...; after pop {r4, pc} / bx lr) and three bx ip thunks. Another port of the game (on 1.00) seeds
+# the 1.00 counterparts (0x81dd110c, 0x81a028a8...); these are 1.05's, checked against the bytes.
+FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm"
+HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert 0x81a7756c:psn_frame_rate 0x817e850e:psn_rtl_mark 0x817e882e:psn_rtl_mark"   # psn_rtl_mark: Arabic right alignment (with IHOOKS psn_rtl_align; hooks.c, docs/psnova/right-alignment-research.md). diagnostics (hooks.c): the pad device's update (RECOMP_PSN_INPUT_TRACE=1); the map insert that aborts after Start the Game. psn_frame_rate: 60 fps with the frame_rate setting (hooks.c, docs/psnova/60fps-sites.md)
+IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"   # psn_rtl_align: a box whose message starts with 0x8095 (Arabic) aligns right. diagnostics: each device slot the input thread's loop loads
