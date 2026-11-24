@@ -29,6 +29,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 
 RT = os.path.dirname(os.path.abspath(__file__)); ROOT = os.path.dirname(RT); RECOMPILER = os.path.join(ROOT, "recompiler")
@@ -278,7 +279,15 @@ def main(argv):
     # (Linux links libm/pthread explicitly; zlib: PSARC archives)
     link = [CC] + FLAGS + ENVDEF + ["-Wall"] + sdl_cflags + PLATFORM + host + EXTRA + objs + sdl_libs + SPIRV_CROSS + AVCODEC + CURL + CXXLIB + LIBS + ["-o", OUT]
     sys.stdout.flush()
-    r = subprocess.run(link)
+    if HOSTED_WINDOWS:
+        # Done by Codex. Keep the compiler wrapper's command line short and preserve Windows paths and macro quotes.
+        with tempfile.TemporaryDirectory(prefix="link-", dir=OBJ) as directory:
+            response = os.path.join(directory, "host.rsp")
+            with open(response, "w", encoding="utf-8", newline="\n") as f:
+                f.writelines(subprocess.list2cmdline([arg]) + "\n" for arg in link[1:])
+            r = subprocess.run([CC, "--rsp-quoting=windows", "@" + response])
+    else:
+        r = subprocess.run(link)
     if r.returncode: return r.returncode
     def beside(src):   # SDL copied next to the binary, replaced whole: a game still running keeps the file it loaded
         dst = os.path.join(os.path.dirname(OUT), os.path.basename(src))
