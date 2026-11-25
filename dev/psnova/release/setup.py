@@ -1,33 +1,40 @@
-"""Windows release installer for Phantasy Star Nova Recomp. Done by Codex."""
+"""Windows release installer for Phantasy Star Nova Recomp. Done by Codex.
+
+Support reports, in-place updates, build generations and rollback were added in setup_reports.py, setup_updates.py and
+setup_generations.py, and in the parts of this file that use them.
+"""
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
-import stat
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
+import setup_generations as G  # noqa: E402
+import setup_reports as R  # noqa: E402
 import setup_sources  # noqa: E402
+import setup_updates as U  # noqa: E402
 from setup_sources import CONTENT, TITLE, SetupError  # noqa: E402,F401
 ENGINE = ROOT / "engine"
 DATA = ROOT / "NovaData"
 PLAYER = DATA / "Player"
 PYTHON = ENGINE / "python/python.exe"
-PIPELINE = ENGINE / "pipeline/vitarecomp.py"
 LOCALIZATION = ROOT / "localization"
 BRIDGE = ENGINE / "release/Play Nova.exe"
 GAME_EXE = ROOT / "Phantasy Star Nova.exe"
 FFMPEG = ENGINE / "release/ffmpeg.exe"
-ENGINE_SOURCES = ("decrypt", "dev", "packs", "pipeline", "recompiler", "runtime", "third_party")
+ENGINE_SOURCES = U.ENGINE_DIRS
 FONT_NAME = "glenthregular.ttf"
 DEFAULT_FONT = LOCALIZATION / "fonts" / FONT_NAME
+FALLBACK_FONT = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts" / "segoeuib.ttf"   # the text builder's fallback (build_text.py)
 # The Glenth Regular 1.004 TrueType file the English text, UI art and subtitles were built and checked with.
 FONT_SHA256 = "eb9bf6e6c482e82307a6b505c58a3e70499c137dfddb98c7a53fc404d3745e0f"
 FONT_URL = "https://elements.envato.com/glenth-classic-display-serif-font-9ZK6SWW"
@@ -56,6 +63,10 @@ LAYERED_FILES = {
     "disc1/f00001.bin": "f58ef308d7e7213ab80f5ef05e325e01dd01beb4578471ac5bcb90226cfbeff0",
     "disc1/f00002.bin": "f34627d1493555cb7bf8497ab99d75b9f2e31b751f7a0cc5788cb6e2f698ebcb",
 }
+STAGES = ("firmware", "base", "update", "import", "analyze", "recompile", "build", "english-text", "english-movies")
+NATIVE_STAGES = STAGES[:7]
+DATA_STAGES = STAGES[:3]
+UPDATE_HEADROOM = 1_500_000_000
 
 
 def digest(path):
@@ -63,20 +74,12 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def atomic_text(path, text):
-    temporary = path.with_name(path.name + ".tmp")
-    with temporary.open("w", encoding="utf-8", newline="\n") as file:
-        file.write(text)
-        file.flush()
-        os.fsync(file.fileno())
-    temporary.replace(path)
+atomic_text = G.atomic_text
+json_file = lambda path: G.read_json(path) or {}  # noqa: E731
 
 
-def json_file(path):
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
+def sha_text(*parts):
+    return hashlib.sha256("\n".join(str(p) for p in parts).encode("utf-8")).hexdigest()
 
 
 def check_paths(paths):
@@ -150,23 +153,7 @@ def setup_lock():
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def remove_superseded_installs(current, report):
-    """Delete generated builds that a finished setup replaced. Saves and settings live in NovaData/Player."""
-    def make_writable(function, path, error):
-        os.chmod(path, stat.S_IWRITE)
-        function(path)
-
-    for path in sorted((DATA / "installs").iterdir()):
-        if (path.name != current and re.fullmatch(r"[0-9a-f]{24}", path.name) and path.is_dir()
-                and not path.is_symlink() and not path.is_junction()):
-            report(f"Removing the replaced build {path.name[:8]}")
-            try:
-                shutil.rmtree(path, onexc=make_writable)
-            except OSError as error:
-                report(f"Could not remove the replaced build {path.name[:8]} ({error}). Setup will try again next time.")
-
-
-def stage_environment(library):
+def stage_environment(library, engine=ENGINE):
     prefixes = ("RECOMP_", "ATIV_", "PYTHON", "BUILD_EXTRA_ENV", "NATIV_")
     env = {key: value for key, value in os.environ.items() if not key.upper().startswith(prefixes)}
     for key in ("ANALYZER", "FORCE", "TARGET", "JOBS", "CPU", "CC", "CXX", "EXTRA_ENV"):
@@ -175,6 +162,14 @@ def stage_environment(library):
                PYTHONUTF8="1", PYTHONNOUSERSITE="1", PYTHONUNBUFFERED="1", PYTHONDONTWRITEBYTECODE="1",
                RECOMP_NO_REPATCH="1", RECOMP_NO_OVERLAY="1", TARGET="windows", RECOMP_CPU="generic")
     return env
+
+
+def free_bytes(path):
+    """Free bytes on the drive. Only a test configuration (update.json with "qa": true) can override the measurement."""
+    override = os.environ.get("NOVA_QA_FREE_BYTES")
+    if override and U.load_config(ROOT).qa:
+        return int(override)
+    return shutil.disk_usage(path).free
 
 
 def remember_inputs(args):
@@ -186,66 +181,155 @@ def remember_inputs(args):
     atomic_text(DATA / "setup-inputs.json", json.dumps(chosen, indent=2) + "\n")
 
 
-def prepare_install(args, report):
-    if not args.game:
-        raise SetupError("Select the Japanese Phantasy Star Nova game: its base-game PKG, or one ZIP that holds the "
-                         "base game and the update.")
-    remember_inputs(args)
-    sources = setup_sources.resolve(args.game, args.update, getattr(args, "license", None))
-    for note in sources.notes:
-        report(note)
-    for package in (sources.base, sources.update):
-        report(f"{package.role.capitalize()}: {package.label} ({'ZIP member' if package.form == 'zip' else package.form}, "
-               f"version {package.version})")
-    if not args.firmware:
-        raise SetupError("Select Sony's Vita system software 3.74 file (PSVUPDAT.PUP).")
-    firmware = args.firmware.resolve()
-    font = args.font.resolve() if args.font else DEFAULT_FONT
-    if not font.is_file():
-        which = f"The selected font file was not found:\n{font}" if args.font else (
-            f"This release does not include the Glenth Regular font ({FONT_NAME}).")
-        raise SetupError(f"{which}\n\nSetup uses Glenth Regular by OWPictures for the English text, UI art and movie "
-                         f"subtitles. Get your own licensed copy:\n{FONT_URL}\nThen either choose {FONT_NAME} in the "
-                         f"Font field, or copy it to:\n{DEFAULT_FONT}")
-    required = [PYTHON, PIPELINE, ENGINE / "version.txt", firmware, font]
-    required.extend((BRIDGE, FFMPEG, LOCALIZATION / "build_text.py", LOCALIZATION / "build_movies.py"))
-    check_paths(required)
-    report("Checking the game, update, firmware, and font...")
-    if digest(firmware) != PUP_SHA256:
-        raise SetupError(f"{firmware} is not the supported Sony Vita 3.74 update file. Download PSVUPDAT.PUP from Sony.\n"
-                         + SONY_FIRMWARE)
-    from PIL import ImageFont
-    try:
-        family, style = ImageFont.truetype(str(font), 18).getname()
-    except OSError as error:
-        raise SetupError(f"The selected font cannot be opened: {font}") from error
-    if family.lower() != "glenth":
-        raise SetupError(f"{font} is the font {family} {style}, not Glenth Regular. Choose {FONT_NAME}.\n{FONT_URL}")
-    if digest(font) != FONT_SHA256:
-        report(f"Note: this {family} {style} file is not the Glenth Regular 1.004 TrueType file the English layout was "
-               "checked with. Setup will continue, but text spacing may differ slightly.")
+def library_outputs(library):
+    """The files that make a generation run, by group, relative to its library folder. A later build reuses a group only when
+    every file in it still has the SHA-256 recorded when it was built."""
+    title = library / "decrypted" / TITLE
+    recomp = title / "recomp"
+    rel = lambda path: path.relative_to(library).as_posix()  # noqa: E731
+    images = [recomp / "game.img"] + [recomp / (Path(name).name.split(".")[0] + ".img") for name in FIRMWARE_MODULES]
+    return {
+        "firmware": [rel(library / "firmware/3.74" / name) for name in FIRMWARE_MODULES],
+        "native": [rel(title / "version"), rel(title / "analysis/eboot.data.json"), *map(rel, images),
+                   rel(recomp / ".recompile_inputs"), rel(recomp / "game_host.exe"), rel(recomp / "SDL3.dll"),
+                   rel(recomp / ".built_version")],
+        "text": [rel(recomp / "fs/lang/en" / PATCH)],
+        "movies": [rel(recomp / "fs/lang/en" / MOVIE)],
+    }
 
-    fingerprint = hashlib.sha256()
-    fingerprint.update((ENGINE / "version.txt").read_bytes())
-    fingerprint.update(f"\n{PUP_SHA256}\n{digest(font)}\n".encode())
-    for path in sorted(LOCALIZATION.rglob("*")):
-        if path.is_file() and "fonts" not in path.relative_to(LOCALIZATION).parts and path.suffix != ".pyc":
-            fingerprint.update(f"{path.relative_to(LOCALIZATION).as_posix()}\0{digest(path)}\n".encode())
-    # Any change to the recompiler, runtime, patches or pipeline must rebuild the game, even if version.txt is unchanged.
-    for folder in ENGINE_SOURCES:
-        for path in sorted((ENGINE / folder).rglob("*")):
-            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
-                fingerprint.update(f"engine/{path.relative_to(ENGINE).as_posix()}\0{digest(path)}\n".encode())
-    packages = (sources.base, sources.update)
-    for name, path in original_files(packages, sources.license is not None):
-        fingerprint.update(f"{name}\0{digest(path)}\n".encode())
-    for package in packages:   # a PKG, or a PKG inside a ZIP: the hash of the package's own bytes
-        if package.form != "folder":
-            fingerprint.update(f"{package.role}-package\0{setup_sources.fingerprint(package, report)}\n".encode())
-    if sources.license_sha256:
-        fingerprint.update(f"license\0{sources.license_sha256}\n".encode())
-    full_id = fingerprint.hexdigest()
-    generation = full_id[:24]
+
+def cri_hash(engine_root):
+    """The CPK reader and writer the movie builder imports from the engine's pipeline/cri folder: part of what makes the movie archive."""
+    cri = Path(engine_root) / "pipeline" / "cri"
+    return U.tree_sha256({p.name: p for p in sorted(cri.glob("*.py"))}) if cri.is_dir() else ""
+
+
+def make_ids(sourceset, font_sha, fallback_sha, inputs_sha):
+    """The fingerprints of the three things a build is made of, and the generation id they make together. Each id includes the
+    inputs (the player's packages, folders and license) so a different input is a different build, as before."""
+    version = (ENGINE / "version.txt").read_bytes().decode("utf-8", "replace")
+    ffmpeg_sha = digest(FFMPEG)
+    ids = {"inputs": inputs_sha,
+           "native": sha_text("native-v1", version, PUP_SHA256, sourceset.hashes["engine"], inputs_sha),
+           "text": sha_text("text-v1", inputs_sha, sourceset.hashes["text"], font_sha, fallback_sha),
+           "movies": sha_text("movies-v2", inputs_sha, sourceset.hashes["movies"], font_sha, ffmpeg_sha, cri_hash(sourceset.roots["engine"]))}
+    ids["full"] = sha_text("generation-v2", ids["native"], ids["text"], ids["movies"])
+    return ids, ffmpeg_sha
+
+
+@dataclass
+class Build:
+    mode: str                          # "setup" (the player's own inputs) or "update" (inputs taken from the build being updated)
+    sourceset: object
+    ids: dict
+    font: Path
+    font_sha: str
+    fallback_sha: str
+    ffmpeg_sha: str
+    report: object
+    attempt: object
+    sources: object = None             # setup_sources.Sources, for mode "setup"
+    firmware: Path = None
+    donor: str = None                  # a build whose files this one may reuse, if they verify
+    holds_game_lock: bool = False
+    seeded: dict = field(default_factory=dict)
+
+    @property
+    def generation(self):
+        return self.ids["full"][:24]
+
+
+# ---- reuse of an earlier build
+
+def verified_donor(candidates, ids, mode, report):
+    """The first earlier build whose recorded files still verify and whose fingerprints match. Returns (id, what it can supply)
+    or (None, None). Anything that does not verify (no record, a changed file) just means this build is made the long way."""
+    for name in candidates:
+        record = G.read_provenance(DATA, name)
+        if not record:
+            continue
+        reuse = {"native": record["ids"].get("native") == ids["native"], "text": record["ids"].get("text") == ids["text"],
+                 "movies": record["ids"].get("movies") == ids["movies"]}
+        if not reuse["native"] and not (mode == "update" and record["ids"].get("inputs") == ids["inputs"]):
+            continue
+        library = DATA / "installs" / name / "library"
+        outputs = record["outputs"]
+        problems = G.verify_outputs(library, outputs.get("firmware", {}))
+        if reuse["native"]:
+            problems += G.verify_outputs(library, outputs.get("native", {}))
+        title = library / "decrypted" / TITLE
+        try:
+            check_hashes(title / "app0", BASE_FILES)
+            check_hashes(title / "patch0", PATCH_FILES)
+            if reuse["native"]:
+                check_hashes(title / "recomp/fs/app0", LAYERED_FILES)
+        except SetupError as error:
+            problems.append(str(error).splitlines()[0])
+        for group in ("text", "movies"):
+            reuse[group] = reuse[group] and not G.verify_outputs(library, outputs.get(group, {}))
+        if problems:
+            report(f"Build {name[:8]} cannot be reused ({problems[0]}); making this build the long way.")
+            continue
+        return name, reuse
+    return None, None
+
+
+def skip_for_seed(level, reuse):
+    """Which files of the earlier build's library are NOT copied into a new one. level "data" copies only the prepared game
+    (firmware, the decrypted base and update) and the English archives that can be kept; level "native" copies what runs."""
+    title = "decrypted/PCSG00351/"
+    lang = title + "recomp/fs/lang/en/"
+    data_prefixes = ("firmware/", "licenses/", title + "app0/", title + "patch0/")
+
+    def skip(relative):
+        if level == "data":
+            if relative.endswith("/"):
+                return not any(p.startswith(relative) or relative.startswith(p)
+                               for p in (*data_prefixes, title + "license.rif", lang))
+            if relative.startswith(lang):
+                name = relative[len(lang):]
+                return not (name == "language.txt" or (name == PATCH and reuse["text"]) or (name == MOVIE and reuse["movies"]))
+            return not (relative.startswith(data_prefixes) or relative == title + "license.rif")
+        recomp = title + "recomp/"
+        if not relative.startswith(recomp):
+            return False
+        sub = relative[len(recomp):]
+        if sub.startswith(("obj_win/", "obj/", "captures/", "nvidia-cache/", "shader_cache/")):
+            return True
+        if "/" not in sub.rstrip("/") and sub.endswith((".c", ".h", ".o", ".a", ".log")):
+            return True
+        if sub == f"fs/lang/en/{PATCH}":
+            return not reuse["text"]
+        if sub == f"fs/lang/en/{MOVIE}":
+            return not reuse["movies"]
+        return False
+    return skip
+
+
+def seed_generation(b, library, install, report):
+    level = "native" if b.seeded["reuse"]["native"] else "data"
+    source = DATA / "installs" / b.donor / "library"
+    need = G.tree_bytes(source)
+    if free_bytes(DATA) < need + UPDATE_HEADROOM // 2:
+        raise SetupError(f"Not enough free space to prepare the new build: it needs about {need / 1e9:.1f} GB and "
+                         f"{free_bytes(DATA) / 1e9:.1f} GB is free. The installed game is untouched. Free up space and try again.")
+    report(f"Copying the prepared game from build {b.donor[:8]} ({need / 1e9:.1f} GB) instead of rebuilding it")
+    started = time.time()
+    G.copy_tree_independent(source, library, skip=skip_for_seed(level, b.seeded["reuse"]))
+    stages = list(NATIVE_STAGES if level == "native" else DATA_STAGES)
+    for group, stage_name in (("text", "english-text"), ("movies", "english-movies")):
+        if b.seeded["reuse"][group]:
+            stages.append(stage_name)
+    report(f"Copied in {time.time() - started:.0f} s; reusing {', '.join(stages)}")
+    atomic_text(install / "progress.json", json.dumps({"inputs": b.ids["full"], "stages": stages, "seeded": {
+        "from": b.donor, "level": level, "reuse": b.seeded["reuse"]}}, indent=2) + "\n")
+
+
+def run_build(b):
+    """The stages that turn the player's game into a generation (or reuse an earlier one's), then the activation. Returns the
+    generation id."""
+    report, attempt = b.report, b.attempt
+    generation = b.generation
     install = DATA / "installs" / generation
     library = install / "library"
     title = library / "decrypted" / TITLE
@@ -253,29 +337,39 @@ def prepare_install(args, report):
     logs = install / "logs"
     logs.mkdir(parents=True, exist_ok=True)
     os.environ["NOVA_SETUP_LOGS"] = str(logs)
-    env = stage_environment(library)
+    attempt.set(generation=generation, target_release=b.sourceset.release)
+    engine_root = b.sourceset.roots["engine"]
+    env = stage_environment(library, engine_root)
 
-    def command(name, argv):
+    def command(name, argv, cwd=None, extra_env=None):
         log = logs / f"{name}.log"
         with log.open("w", encoding="utf-8") as output:
-            result = subprocess.run([str(x) for x in argv], cwd=ENGINE, env=env,
+            result = subprocess.run([str(x) for x in argv], cwd=cwd or engine_root, env={**env, **(extra_env or {})},
                                     stdout=output, stderr=subprocess.STDOUT,
                                     creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode:
             tail = "\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-16:])
             raise SetupError(f"{name} failed (exit {result.returncode}).\nLog: {log}\n\n{tail}")
 
+    pipeline_script = engine_root / "pipeline/vitarecomp.py"
+
     def pipeline(name, *argv):
-        command(name, [PYTHON, "-s", "-B", PIPELINE, *argv])
+        command(name, [PYTHON, "-s", "-B", pipeline_script, *argv])
 
     state = install / "progress.json"
     journal = json_file(state)
-    if journal and journal.get("inputs") != full_id:
+    if journal and journal.get("inputs") != b.ids["full"]:
         raise SetupError(f"The install record is inconsistent. Use a fresh release folder.\n{install}")
+    if not journal and b.donor:
+        G.remove_tree(library)
+        seed_generation(b, library, install, report)
+        journal = json_file(state)
     completed = journal.setdefault("stages", [])
-    journal["inputs"] = full_id
+    journal["inputs"] = b.ids["full"]
+    seeded = bool(journal.get("seeded"))
 
     def stage(name, label, work, outputs):
+        attempt.stage(name)
         if name in completed and all(path.is_file() and path.stat().st_size for path in outputs):
             report(f"{label} - already complete")
             return
@@ -288,21 +382,18 @@ def prepare_install(args, report):
         completed.append(name)
         atomic_text(state, json.dumps(journal, indent=2) + "\n")
 
-    if "firmware" not in completed and shutil.disk_usage(ROOT).free < 14 * 1024**3:
+    if "firmware" not in completed and free_bytes(ROOT) < 14 * 1024**3:
         raise SetupError("Setup needs 14 GB of available space on the release drive to build the game.")
     fw = library / "firmware/3.74"
-    stage("firmware", "Preparing Vita firmware modules", lambda: pipeline("firmware", "firmware", firmware),
+    stage("firmware", "Preparing Vita firmware modules", lambda: pipeline("firmware", "firmware", b.firmware),
           [fw / name for name in FIRMWARE_MODULES])
 
     scratch = DATA / "scratch"   # unpacked ZIP members live here, on the release drive, only while one import runs
+    sources = b.sources
 
     def clear_import_scratch(announce=False):
         """Remove what an interrupted or finished import leaves behind: an unpacked ZIP member, and the half-written
         decrypt folders (.add*) that a stopped `vitarecomp add` never cleans up."""
-        def make_writable(function, path, error):
-            os.chmod(path, stat.S_IWRITE)
-            function(path)
-
         leftovers = [scratch] if scratch.exists() else []
         decrypted = library / "decrypted"
         leftovers.extend(decrypted.glob(".add*") if decrypted.is_dir() else [])
@@ -310,11 +401,14 @@ def prepare_install(args, report):
             report("Removing what an interrupted import left behind")
         for path in leftovers:
             if path.is_dir() and not path.is_symlink():
-                shutil.rmtree(path, onexc=make_writable)
+                G.remove_tree(path)
             else:
                 path.unlink(missing_ok=True)
 
     def install_input(name, package, destination, expected):
+        if package is None:
+            raise SetupError(f"The {name} game files are needed again to make this build. Choose your Game PKG or ZIP, Update PKG, "
+                             "game license, and firmware in Setup, then click Build and install. The installed game is untouched.")
         clear_import_scratch(announce=True)
         license_args = ["--license", sources.license] if sources.license else []
         try:
@@ -338,9 +432,12 @@ def prepare_install(args, report):
             clear_import_scratch()
 
     stage("base", "Importing and checking the base game",
-          lambda: install_input("base", sources.base, title / "app0", BASE_FILES), [title / "app0" / name for name in BASE_FILES])
+          lambda: install_input("base", sources.base if sources else None, title / "app0", BASE_FILES),
+          [title / "app0" / name for name in BASE_FILES])
     stage("update", "Importing and checking update 1.05",
-          lambda: install_input("update", sources.update, title / "patch0", PATCH_FILES), [title / "patch0" / name for name in PATCH_FILES])
+          lambda: install_input("update", sources.update if sources else None, title / "patch0", PATCH_FILES),
+          [title / "patch0" / name for name in PATCH_FILES])
+
     def import_game():
         pipeline("import", "import", TITLE)
         check_hashes(recomp / "fs/app0", LAYERED_FILES)
@@ -352,24 +449,27 @@ def prepare_install(args, report):
 
     def recompile():
         pipeline("recompile", "recompile", TITLE)
-        command("labels", [PYTHON, "-I", "-B", ENGINE / "dev/psnova/check_labels.py", recomp, "game"])
+        command("labels", [PYTHON, "-I", "-B", engine_root / "dev/psnova/check_labels.py", recomp, "game"])
 
     image_files = [recomp / "game.img"] + [recomp / (Path(name).name.split(".")[0] + ".img") for name in FIRMWARE_MODULES]
-    stage("recompile", "Recompiling Vita code and checking generated labels", recompile,
-          image_files + [recomp / ".recompile_inputs", recomp / "game_part99.c"])
+    recompile_outputs = image_files + [recomp / ".recompile_inputs"] + ([] if seeded else [recomp / "game_part99.c"])
+    stage("recompile", "Recompiling Vita code and checking generated labels", recompile, recompile_outputs)
     stage("build", "Building the Windows game executable", lambda: pipeline("build", "build", TITLE),
           [recomp / "game_host.exe", recomp / "SDL3.dll", recomp / ".built_version"])
     game_data = recomp / "fs/app0"
     english = recomp / "fs/lang/en"
     english.mkdir(parents=True, exist_ok=True)
+    text_root, movies_root = b.sourceset.roots["text"], b.sourceset.roots["movies"]
     stage("english-text", "Building English menus and dialogue",
-          lambda: command("english-text", [PYTHON, "-I", "-B", "-u", LOCALIZATION / "build_text.py", game_data / BASE,
-                                           game_data / PATCH, english / PATCH, "--font", font]), [english / PATCH])
+          lambda: command("english-text", [PYTHON, "-I", "-B", "-u", text_root / "build_text.py", game_data / BASE,
+                                           game_data / PATCH, english / PATCH, "--font", b.font], cwd=ENGINE), [english / PATCH])
     stage("english-movies", "Building the English movie subtitles",
-          lambda: command("english-movies", [PYTHON, "-I", "-B", "-u", LOCALIZATION / "build_movies.py", game_data / MOVIE,
-                                             english / MOVIE, "--font", font, "--ffmpeg", FFMPEG,
-                                             "--work", install / "movie-work"]), [english / MOVIE])
+          lambda: command("english-movies", [PYTHON, "-s", "-B", "-u", movies_root / "build_movies.py", game_data / MOVIE,
+                                             english / MOVIE, "--font", b.font, "--ffmpeg", FFMPEG,
+                                             "--work", install / "movie-work"], cwd=ENGINE,
+                          extra_env={"PYTHONPATH": str(engine_root / "pipeline" / "cri")}), [english / MOVIE])
     shutil.rmtree(install / "movie-work", ignore_errors=True)   # scratch frames from the subtitle build
+    attempt.stage("finishing")
     report("Installing the English language and game launcher")
     atomic_text(english / "language.txt", "English\n")
     atomic_text(english.parent / "default.txt", "en\n")
@@ -385,6 +485,26 @@ def prepare_install(args, report):
                            "frame_rate = 60\nsharpen = 0.507067\nfullscreen = 0\n")
         except FileExistsError:
             pass
+    write_provenance(b, library)
+    activate_generation(b, generation, report)
+    return generation
+
+
+def write_provenance(b, library):
+    groups = library_outputs(library)
+    record = {"schema": G.PROVENANCE_SCHEMA, "generation": b.generation, "release": b.sourceset.release,
+              "version": R.release_info(ROOT)["version"], "built": R.now_iso(), "ids": b.ids,
+              "sources": {kind: {"content": b.sourceset.hashes[kind], "origin": b.sourceset.origins[kind],
+                                 "release": b.sourceset.releases[kind]} for kind in U.KINDS},
+              "fonts": {"font": b.font_sha, "fallback": b.fallback_sha}, "tools": {"ffmpeg": b.ffmpeg_sha},
+              "outputs": {group: G.hash_outputs(library, names) for group, names in groups.items()},
+              "library_bytes": G.tree_bytes(library)}
+    atomic_text(library.parent / G.PROVENANCE, json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+def activate_generation(b, generation, report):
+    """Replace GAME_EXE if needed, then make the generation the one the game launches. Needs the game closed: the new build is
+    complete either way, and a later run only repeats this step."""
     if not GAME_EXE.is_file() or digest(GAME_EXE) != digest(BRIDGE):
         tmp = GAME_EXE.with_suffix(".exe.tmp")
         shutil.copyfile(BRIDGE, tmp)
@@ -393,14 +513,302 @@ def prepare_install(args, report):
         except PermissionError as error:
             tmp.unlink(missing_ok=True)
             raise SetupError(f"Close {GAME_EXE.name} and run setup again to finish the update.") from error
-    atomic_text(DATA / "current.txt", generation + "\n")
-    remove_superseded_installs(generation, report)
+    try:
+        with (nullcontext() if b.holds_game_lock else G.game_lock(PLAYER)):
+            old = G.activate(DATA, generation, report)
+    except G.GameRunning as error:
+        raise SetupError(f"The new build is ready, but {error} Run setup again to switch to it.") from error
+    except RuntimeError as error:
+        raise SetupError(str(error)) from error
+    U.accept_release(DATA, b.sourceset.release)
+    keep = set()
+    for name in filter(None, (G.read_generation(DATA / "current.txt"), G.read_generation(DATA / "previous.txt"))):
+        record = G.read_provenance(DATA, name)
+        for kind, item in ((record or {}).get("sources") or {}).items():
+            if str(item.get("origin", "")).startswith("update:"):
+                keep.add((kind, str(item["content"])[:16]))
+    U.collect_components(DATA, keep)
     report(f"Setup complete. Start {GAME_EXE.name} from the release folder.")
+    return old
+
+
+# ---- normal setup: the player's own inputs
+
+def active_context():
+    """(the active build's id, its provenance or None, the sources it was made from)."""
+    current = G.read_generation(DATA / "current.txt")
+    record = G.read_provenance(DATA, current) if current else None
+    return current, record, U.sources_from_provenance(ROOT, DATA, record)
+
+
+def check_font(font):
+    if not font.is_file():
+        raise SetupError(f"The English text font was not found:\n{font}\n\nChoose Glenth Regular ({FONT_NAME}) in the Font field "
+                         f"of Setup, or copy it to:\n{DEFAULT_FONT}\nGet your own licensed copy: {FONT_URL}\n"
+                         "The installed game is untouched.")
+    from PIL import ImageFont
+    try:
+        family, style = ImageFont.truetype(str(font), 18).getname()
+    except OSError as error:
+        raise SetupError(f"The selected font cannot be opened: {font}") from error
+    if family.lower() != "glenth":
+        raise SetupError(f"{font} is the font {family} {style}, not Glenth Regular. Choose {FONT_NAME}.\n{FONT_URL}")
+    return family, style
+
+
+def resolved_text(path) -> str:
+    try:
+        return str(Path(path).resolve())
+    except OSError:
+        return str(path)
+
+
+def prepare_install(args, report, attempt):
+    if not args.game:
+        raise SetupError("Select the Japanese Phantasy Star Nova game: its base-game PKG, or one ZIP that holds the "
+                         "base game and the update.")
+    remember_inputs(args)
+    sources = setup_sources.resolve(args.game, args.update, getattr(args, "license", None))
+    attempt.private(*[p.path.name for p in (sources.base, sources.update)], *[p.member for p in (sources.base, sources.update)],
+                    paths=[str(p.path) for p in (sources.base, sources.update)])
+    for note in sources.notes:
+        report(note)
+    for package in (sources.base, sources.update):
+        report(f"{package.role.capitalize()}: {package.label} ({'ZIP member' if package.form == 'zip' else package.form}, "
+               f"version {package.version})")
+    if not args.firmware:
+        raise SetupError("Select Sony's Vita system software 3.74 file (PSVUPDAT.PUP).")
+    firmware = args.firmware.resolve()
+    font = args.font.resolve() if args.font else DEFAULT_FONT
+    if not font.is_file():
+        which = f"The selected font file was not found:\n{font}" if args.font else (
+            f"This release does not include the Glenth Regular font ({FONT_NAME}).")
+        raise SetupError(f"{which}\n\nSetup uses Glenth Regular by OWPictures for the English text, UI art and movie "
+                         f"subtitles. Get your own licensed copy:\n{FONT_URL}\nThen either choose {FONT_NAME} in the "
+                         f"Font field, or copy it to:\n{DEFAULT_FONT}")
+    required = [PYTHON, ENGINE / "pipeline/vitarecomp.py", ENGINE / "version.txt", firmware, font, FALLBACK_FONT]
+    required.extend((BRIDGE, FFMPEG, LOCALIZATION / "build_text.py", LOCALIZATION / "build_movies.py"))
+    check_paths(required)
+    report("Checking the game, update, firmware, and font...")
+    if digest(firmware) != PUP_SHA256:
+        raise SetupError(f"{firmware} is not the supported Sony Vita 3.74 update file. Download PSVUPDAT.PUP from Sony.\n"
+                         + SONY_FIRMWARE)
+    family, style = check_font(font)
+    font_sha = digest(font)
+    if font_sha != FONT_SHA256:
+        report(f"Note: this {family} {style} file is not the Glenth Regular 1.004 TrueType file the English layout was "
+               "checked with. Setup will continue, but text spacing may differ slightly.")
+
+    attempt.stage("fingerprinting the inputs")
+    inputs = hashlib.sha256()
+    packages = (sources.base, sources.update)
+    for name, path in original_files(packages, sources.license is not None):
+        inputs.update(f"{name}\0{digest(path)}\n".encode())
+    for package in packages:   # a PKG, or a PKG inside a ZIP: the hash of the package's own bytes
+        if package.form != "folder":
+            inputs.update(f"{package.role}-package\0{setup_sources.fingerprint(package, report)}\n".encode())
+    if sources.license_sha256:
+        inputs.update(f"license\0{sources.license_sha256}\n".encode())
+    # (a newer full release folder beats a staged update; otherwise the active build's own sources are used again)
+    _current, _record, sourceset = active_context()
+    ids, ffmpeg_sha = make_ids(sourceset, font_sha, digest(FALLBACK_FONT), inputs.hexdigest())
+    current = G.read_generation(DATA / "current.txt")
+    candidates = ([current] if current else []) + [g for g in G.generations(DATA) if g != current]
+    donor, reuse = (None, None)
+    if not (DATA / "installs" / ids["full"][:24] / "progress.json").is_file():
+        donor, reuse = verified_donor([g for g in candidates if g != ids["full"][:24]], ids, "setup", report)
+    build = Build("setup", sourceset, ids, font, font_sha, digest(FALLBACK_FONT), ffmpeg_sha, report, attempt, sources=sources,
+                  firmware=firmware, donor=donor, seeded={"reuse": reuse} if donor else {})
+    return run_build(build)
 
 
 def install(args, report):
     with setup_lock():
-        prepare_install(args, report)
+        selected = [getattr(args, key) for key in ("game", "update", "license", "firmware", "font") if getattr(args, key, None)]
+        attempt = R.Attempt(DATA, "setup", private_names=[p.name for p in selected], private_paths=[*map(str, selected), *map(resolved_text, selected)])
+
+        def say(message):
+            attempt.line(message)
+            report(message)
+
+        try:
+            prepare_install(args, say, attempt)
+        except BaseException as error:
+            attempt.finish("failed", 1, str(error) or type(error).__name__)
+            raise
+        attempt.finish("success", 0)
+
+
+# ---- updates
+
+def update_status():
+    """What Setup shows about updates and builds, without any network use."""
+    config = U.load_config(ROOT)
+    current, record, sourceset = active_context()
+    state = U.read_state(DATA)
+    previous = G.read_generation(DATA / "previous.txt")
+    return {"enabled": config.enabled, "problem": config.problem, "state": state, "current": current, "previous": previous,
+            "can_roll_back": bool(previous and previous != current and previous in G.generations(DATA)),
+            "release": sourceset.release, "highest": U.highest_release(ROOT, DATA), "has_record": bool(record),
+            "game_running": G.game_is_running(PLAYER) if PLAYER.exists() else False}
+
+
+def check_updates(force=False):
+    _current, _record, sourceset = active_context()
+    return U.check_for_updates(ROOT, dict(sourceset.hashes), force=force)
+
+
+def read_pending(config):
+    pending = DATA / "Updates" / "pending"
+    try:
+        manifest_bytes = (pending / "manifest.json").read_bytes()
+        signature = bytes.fromhex((pending / "manifest.sig").read_text(encoding="ascii").strip())
+        return U.verify_manifest(manifest_bytes, signature, config)
+    except (OSError, ValueError, U.UpdateError):
+        return None
+
+
+def prepare_update(args, report, attempt):
+    config = U.load_config(ROOT)
+    if not config.enabled:
+        raise SetupError(f"Updates are not available: {config.problem}.")
+    current, record, active = active_context()
+    if not current or not G.launchable(DATA, current)[0]:
+        raise SetupError("There is no installed game to update. Run Build and install first.")
+    attempt.stage("checking the update")
+    manifest = read_pending(config)
+    try:
+        if manifest is None:
+            _bytes, _sig, manifest = U.fetch_manifest(config)
+    except U.UpdateError as error:
+        raise SetupError(str(error)) from error
+    highest = U.highest_release(ROOT, DATA)
+    if manifest["release"] <= highest:
+        raise SetupError(f"There is no newer update: this install already has release {highest} (the feed offers {manifest['release']}).")
+    if manifest["min_updater"] > U.UPDATER_VERSION:
+        raise SetupError("This update needs a newer Setup than this release has. Download the new release.")
+    plan = U.plan_update(manifest, dict(active.hashes))
+    attempt.set(target_release=manifest["release"])
+    report(f"Update to {manifest['version']} (release {manifest['release']}): {plan['rebuild']} rebuild, "
+           f"{plan['download_bytes'] / 1e6:.1f} MB to download")
+    if not plan["components"]:
+        U.accept_release(DATA, manifest["release"])
+        report("This release has the same files as the installed build, so nothing was rebuilt.")
+        return None
+    if not record:
+        raise SetupError("The installed build was made before build records were kept, so an update cannot reuse it. Run Build and "
+                         "install once with your game files (Game PKG or ZIP, Update PKG, license and firmware); after that, "
+                         "updates are quick. The installed game still works.")
+    # what the new build would be made of, known from the signed manifest before anything is downloaded
+    provisional = U.SourceSet(roots=dict(active.roots), hashes={**active.hashes, **{k: manifest["components"][k]["content_sha256"] for k in plan["components"]}})
+    font = (args.font.resolve() if getattr(args, "font", None) else None) or Path(
+        json_file(DATA / "setup-inputs.json").get("font") or DEFAULT_FONT)
+    font_sha = digest(font) if font.is_file() else record["fonts"]["font"]
+    fallback_sha = digest(FALLBACK_FONT) if FALLBACK_FONT.is_file() else record["fonts"]["fallback"]
+    wanted, _ffmpeg = make_ids(provisional, font_sha, fallback_sha, record["ids"]["inputs"])
+    if wanted["text"] != record["ids"]["text"] or wanted["movies"] != record["ids"]["movies"]:
+        check_font(font)               # names the font to choose again; the installed game is untouched
+        check_paths([FALLBACK_FONT, FFMPEG])
+    need = plan["download_bytes"] + record.get("library_bytes", 7_000_000_000) + UPDATE_HEADROOM
+    if free_bytes(DATA) < need:
+        raise SetupError(f"Not enough free space for this update: it needs about {need / 1e9:.1f} GB on the release drive and "
+                         f"{free_bytes(DATA) / 1e9:.1f} GB is free. Nothing was downloaded and the installed game is untouched.")
+
+    try:
+        lock = G.game_lock(PLAYER)
+        lock.__enter__()
+    except G.GameRunning as error:
+        raise SetupError(str(error)) from error
+    try:
+        staged = {}
+        for kind in plan["components"]:
+            item = manifest["components"][kind]
+            attempt.stage(f"downloading {kind}")
+            payload = DATA / "Updates" / "downloads" / str(manifest["release"]) / item["payload"]
+            folder = U.component_dir(DATA, kind, item["content_sha256"])
+            meta = G.read_json(folder / "component.json") or {}
+            if meta.get("content_sha256") != item["content_sha256"] or not folder.is_dir():
+                try:
+                    if not payload.is_file() or payload.stat().st_size != item["size"]:
+                        report(f"Downloading the {kind} update ({item['size'] / 1e6:.1f} MB)")
+                        U.http_download(config.feed_url + config.channel + "/payloads/" + item["payload"], payload, item["size"],
+                                        item["sha256"])
+                    U.verify_payload(payload, item["size"], item["sha256"])
+                    report(f"Checked the {kind} update against the signed manifest; unpacking it")
+                    U.extract_component(payload, kind, folder, item["content_sha256"], manifest["release"], ENGINE)
+                except U.UpdateError as error:
+                    payload.unlink(missing_ok=True)
+                    raise SetupError(str(error)) from error
+            staged[kind] = (folder, item["content_sha256"])
+        sourceset = U.overlay_sources(active, staged, manifest["release"])
+        ids, ffmpeg_sha = make_ids(sourceset, font_sha, fallback_sha, record["ids"]["inputs"])
+        generation = ids["full"][:24]
+        attempt.stage("preparing the new build")
+        donor, reuse = (None, None)
+        if not (DATA / "installs" / generation / "progress.json").is_file():
+            donor, reuse = verified_donor([current], ids, "update", report)
+            if not donor:
+                raise SetupError("The installed build could not be reused: its files no longer verify. Run Build and install with "
+                                 "your game files (Game PKG or ZIP, Update PKG, license and firmware) to rebuild it. The installed "
+                                 "game is untouched.")
+        build = Build("update", sourceset, ids, font, font_sha, fallback_sha, ffmpeg_sha, report, attempt, donor=donor,
+                      seeded={"reuse": reuse} if donor else {}, holds_game_lock=True)
+        return run_build(build)
+    finally:
+        lock.__exit__(None, None, None)
+
+
+def install_update(args, report):
+    with setup_lock():
+        attempt = R.Attempt(DATA, "update")
+
+        def say(message):
+            attempt.line(message)
+            report(message)
+
+        try:
+            prepare_update(args, say, attempt)
+        except BaseException as error:
+            attempt.finish("failed", 1, str(error) or type(error).__name__)
+            raise
+        attempt.finish("success", 0)
+
+
+def roll_back(report):
+    with setup_lock():
+        attempt = R.Attempt(DATA, "rollback")
+        try:
+            attempt.stage("rolling back")
+            with G.game_lock(PLAYER):
+                now, _was = G.roll_back(DATA, lambda m: (attempt.line(m), report(m)))
+            attempt.set(generation=now)
+        except G.GameRunning as error:
+            attempt.finish("failed", 1, str(error))
+            raise SetupError(str(error)) from error
+        except RuntimeError as error:
+            attempt.finish("failed", 1, str(error))
+            raise SetupError(str(error)) from error
+        except BaseException as error:
+            attempt.finish("failed", 1, str(error) or type(error).__name__)
+            raise
+        attempt.finish("success", 0)
+
+
+def export_report():
+    return R.export_report(ROOT)
+
+
+class Backend:
+    """What the setup window calls."""
+    root, data, game_exe = ROOT, DATA, GAME_EXE
+    sony_firmware, font_url = SONY_FIRMWARE, FONT_URL
+    setup_error = SetupError
+    install = staticmethod(install)
+    install_update = staticmethod(install_update)
+    roll_back = staticmethod(roll_back)
+    check_updates = staticmethod(check_updates)
+    update_status = staticmethod(update_status)
+    export_report = staticmethod(export_report)
 
 
 def main():
@@ -412,15 +820,50 @@ def main():
     parser.add_argument("--license", type=Path, help="the game's work.bin or .rif, when the PKG has no license inside it")
     parser.add_argument("--firmware", type=Path, help="Sony's Vita system software 3.74 file (PSVUPDAT.PUP)")
     parser.add_argument("--font", type=Path, help="Glenth Regular, when it is not in localization\\fonts")
+    parser.add_argument("--export-report", action="store_true", help="write a support report ZIP under NovaData\\Reports")
+    parser.add_argument("--check-updates", action="store_true", help="ask the update feed (at most once a day unless --force)")
+    parser.add_argument("--force", action="store_true", help="with --check-updates: ask now")
+    parser.add_argument("--install-update", action="store_true", help="install the update --check-updates found")
+    parser.add_argument("--rollback", action="store_true", help="go back to the earlier build")
+    parser.add_argument("--update-status", action="store_true", help="print the update and build status")
+    parser.add_argument("--quiet", action="store_true", help="print nothing (for the launcher's background check)")
     args = parser.parse_args()
     if len(sys.argv) == 1:
         from setup_ui import show
-        show(install, SetupError, ROOT, DATA, GAME_EXE, SONY_FIRMWARE, FONT_URL)
+        show(Backend)
         return 0
+    if sys.stdout is None:    # started without a console (the game launcher's "Create a support report" button)
+        sys.stdout = sys.stderr = open(os.devnull, "w")
+        if args.export_report:
+            from setup_ui import report_dialog
+            try:
+                report_dialog(export_report())
+            except (OSError, RuntimeError) as error:
+                report_dialog(None, str(error))
+            return 0
+    say = (lambda message: None) if args.quiet else (lambda message: print(message, flush=True))
     try:
-        install(args, lambda message: print(message, flush=True))
-    except (SetupError, OSError) as error:
+        if args.export_report:
+            say(f"Support report written: {export_report()}")
+            say("It holds no saves, game files, licenses or file paths. Share it yourself if you want help.")
+        elif args.check_updates:
+            state = check_updates(force=args.force)
+            plan = state.get("available")
+            say(f"Updates: {state.get('last_result', 'unknown')}" + (f" - {state['last_error']}" if state.get("last_error") else ""))
+            if plan:
+                say(f"  {plan['version']} (release {plan['release']}), {plan['download_bytes'] / 1e6:.1f} MB, rebuild: {plan['rebuild']}")
+        elif args.update_status:
+            say(json.dumps(update_status(), indent=2, default=str))
+        elif args.install_update:
+            install_update(args, say)
+        elif args.rollback:
+            roll_back(say)
+        else:
+            install(args, say)
+    except (SetupError, OSError, RuntimeError) as error:
         print(f"Setup could not finish.\n{error}", file=sys.stderr)
+        if not args.export_report:
+            print("\nTo create a support report you can share, run: Setup Phantasy Star Nova.exe --export-report", file=sys.stderr)
         return 1
     return 0
 

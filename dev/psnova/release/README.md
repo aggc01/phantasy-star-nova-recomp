@@ -89,14 +89,42 @@ Everything that is yours lives in **`NovaData\Player`** inside the release folde
 | Save backups and deleted saves | `NovaData\Player\save_backups`, `NovaData\Player\deleted_saves` |
 | Settings | `NovaData\Player\settings.ini` |
 | Graphics debug captures (F12) | `NovaData\Player\captures` |
-| Last game log | `NovaData\Player\session.log` |
+| Last two game logs | `NovaData\Player\session.log`, `NovaData\Player\session.prev.log` |
+| What happened at each game start and exit | `NovaData\Player\launch.json`, `launch.prev.json` (no file paths in them) |
 | Setup logs | `NovaData\installs\<build-id>\logs` (the **Open setup logs** button opens them) |
+| The latest setup attempt | `NovaData\setup-attempt.json` |
+| Support reports you exported | `NovaData\Reports` |
+| Downloaded updates (checked, then unpacked) | `NovaData\Updates` |
 
 Your game files are only read, never changed. The saves use the game's own save format. To move to another PC, copy the `NovaData\Player` folder.
 
-## Resuming and updating
+## Resuming, updating and rolling back
 
-Run **Setup Phantasy Star Nova.exe** again to resume an interrupted setup. Finished stages are skipped. To update, close the game, extract the new release over the old folder, and run setup. It rebuilds what changed and removes the old build when it is done. Your saves and settings in `NovaData\Player` are kept. Your game files stay where you chose them.
+Run **Setup Phantasy Star Nova.exe** again to resume an interrupted setup. Finished stages are skipped. Your saves and settings in `NovaData\Player` are kept, and your game files stay where you chose them.
+
+**Updates inside the game folder.** When update checks are on in your release, Setup asks the update feed when it opens, and the game's launcher asks after you quit normally, **at most once a day** between them. The **Updates** panel in Setup shows what a newer release changes before anything is downloaded: the version, the notes, the download size and how much has to be rebuilt:
+
+| The update changes | Setup rebuilds | About |
+| --- | --- | --- |
+| English menus and dialogue | only the English text archive | a few minutes |
+| English movie subtitles | only the English movie archive | about ten minutes |
+| The game's engine | the game itself, from the game data already on your PC | about half an hour |
+
+Nothing is installed until you click **Install update**, and the game has to be closed. The new build is made next to your working one and only switched on when it is complete and checked, so a stopped or failed update leaves the build you were playing untouched. **Check for updates** asks the feed again right away. With no connection the check fails quietly and the game starts as usual. Updates are signed: Setup checks the signature and every download's SHA-256 before it unpacks or runs anything, and ignores an older release than one it already took. Changes to Setup's own programs, the bundled Python or the build tools come only with a new release download: extract it over the old folder and run setup as before.
+
+Setup keeps your **previous build** as well as the current one. If a new build misbehaves, close the game and click **Roll back** to go back to the earlier one (click it again to return). Your saves and settings are never touched. An update needs room for a second build on the release drive: Setup works out the figure (about 8 GB) and checks it before it downloads anything.
+
+If update checks are off ("Update checks are off in this release"), the release you have does not point at a feed yet. Everything else works the same.
+
+An update that only changes English text or movies needs your **font** again to rebuild it. If Setup cannot find it, it says so and leaves the installed game alone: choose Glenth Regular in the Font field and click **Install update** again. If your installed build was made by an earlier version of Setup, run **Build and install** once with your game files first; after that, updates reuse your build.
+
+## If the game or setup has a problem: support reports
+
+Click **Export support report** in Setup, at any time, even before the first successful install. The window also offers it when setup fails, and the game's launcher offers it when the game fails to start, crashes or closes abnormally (a normal quit stays quiet). Setup writes a ZIP to `NovaData\Reports` and shows where it is. **Nothing is sent anywhere**: you decide whether to share the file.
+
+The report holds a readable summary (release and build numbers, Windows and graphics card, your graphics and input settings), what the latest setup attempt did and where it stopped, whether the game last ended normally, crashed or was interrupted, and short excerpts of the setup and game logs. It also says which build you can still play when an update failed. Your user name, folder paths, the names of the files you chose and any license values are replaced with markers such as `<path>`, and setup refuses to write a report that still contains them. It never holds saves, game files, packages, licenses, fonts, screenshots or memory dumps.
+
+From a command prompt: `"Setup Phantasy Star Nova.exe" --export-report`.
 
 ## If setup stops
 
@@ -117,6 +145,12 @@ Run **Setup Phantasy Star Nova.exe** again to resume an interrupted setup. Finis
 | The firmware is not the supported file | Download `PSVUPDAT.PUP` for system software 3.74 from the PlayStation page above. |
 | It needs Glenth Regular | See step 1. |
 | Not enough free space | Free up space on the release drive and run setup again. |
+| The update needs more free space | An update makes a second build before it switches. Free up the space it names. Nothing was downloaded and your build is untouched. |
+| Close Phantasy Star Nova, then try again | An update or roll back only runs while the game is closed. |
+| The update does not match the signed manifest, or its signature does not match | The download was damaged or changed. It was deleted and nothing was installed. Try again later; if it keeps happening, do not install it and send a support report. |
+| The installed build was made before build records were kept | Run **Build and install** once with your game files. After that, updates reuse your build. |
+| The English text font was not found | Choose Glenth Regular in the Font field (or copy it to `localization\fonts`), then click **Install update** again. |
+| The new build is ready, but the game is running | Close the game and run setup again to switch to it. |
 | A stage failed | The message names the log. **Open setup logs** shows the folder. |
 
 ## Credits and licenses

@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "channel": "stable",
+  "feed_url": "",
+  "public_key": "",
+  "allow_loopback_http": false,
+  "qa": false
+}
