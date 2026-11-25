@@ -27,8 +27,7 @@ sys.path.insert(0, HERE)
 import cpk  # noqa: E402
 
 PROJECT = 'F:/Antigravity Proj/Recomp-decomp/Phantasy Star Nova Recomp'
-SAMPLES = ('C:/Users/<user>/AppData/Local/Temp/claude/998bc63b0bafea56/'
-           'b675f1be-9794-49d9-bad0-3237cb167afe/scratchpad/cpk-samples')
+SAMPLES = PROJECT + '/dump/psnova-l10n/scratch/cpk-samples'   # (git-ignored)
 REPATCH = 'F:/RECOMP GAMES/Phantasy Star Nova (v1.05)/rePatch/PCSG00351'
 INV = os.path.join(HERE, 'inventory')
 SAMPLE_CAP = 200 * 1024 * 1024

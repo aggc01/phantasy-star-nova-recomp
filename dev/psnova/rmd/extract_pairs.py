@@ -5,7 +5,7 @@ import cpk
 TSV = r'F:\Antigravity Proj\Recomp-decomp\Phantasy Star Nova Recomp\dev\psnova\inventory\compare-patch105-vs-repatch.tsv'
 JP = r'F:\Antigravity Proj\Recomp-decomp\Phantasy Star Nova Recomp\dump\decrypted\PCSG00351\patch0\NOVA_FileList_Vita_patch.cpk'
 EN = r'F:\RECOMP GAMES\Phantasy Star Nova (v1.05)\rePatch\PCSG00351\NOVA_FileList_Vita_patch.cpk'
-OUT = r'C:\Users\<user>\AppData\Local\Temp\claude\998bc63b0bafea56\b675f1be-9794-49d9-bad0-3237cb167afe\scratchpad\rmd-samples'
+OUT = r'F:\Antigravity Proj\Recomp-decomp\Phantasy Star Nova Recomp\dump\psnova-l10n\scratch\rmd-samples'   # (git-ignored)
 
 rows = []
 with open(TSV, encoding='utf-8') as f:
