@@ -32,27 +32,31 @@ text and subtitle data are not in this repository yet, so a build from this repo
 
 | | |
 | --- | --- |
-| PC | 64-bit Windows 10 or 11, a GPU with a current Vulkan driver, about 20 GB of free disk space |
+| PC | 64-bit Windows 10 or 11, a GPU with a current Vulkan driver, about 12 GB of free disk space (plus room to unpack the game if it is in a ZIP) |
 | Software | [Git for Windows](https://git-scm.com/download/win) (for Git Bash) and [Python](https://www.python.org/downloads/) 3.12 or newer |
 | The game | *Phantasy Star Nova*, Japan, title ID `PCSG00351`: the **1.00** base game and the official **1.05** update, as PKG files or as folders copied from a Vita (`ux0:app/PCSG00351`, `ux0:patch/PCSG00351`) |
-| The game's licence | `work.bin` or a `.rif` file for your copy |
+| The game's licence | `work.bin` or a `.rif` file for your copy. In a game folder copied from a Vita it is `sce_sys\package\work.bin` |
 | Vita system software | `PSVUPDAT.PUP` 3.74, from [PlayStation's download page](https://www.playstation.com/en-us/support/hardware/psvita/system-software/) |
 
 Other regions and versions are not supported. Use an unmodified copy.
 
 ## Setup
 
-Run these from PowerShell in the folder where you want the project, unless a step says Git Bash. The first build takes
-about an hour; later runs start in seconds.
+Run these from PowerShell in the folder where you want the project, unless a step says Git Bash. Setup takes about
+25 minutes in all, most of it the first build; after that the game starts in seconds.
 
-**1. Get the code and its Python packages.**
+**1. Get the code, its Python packages and a folder for your game library.**
 
 ```powershell
 git clone https://github.com/aggc01/phantasy-star-nova-recomp.git
 cd phantasy-star-nova-recomp
 py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+New-Item -ItemType Directory dump
 ```
+
+The `dump` folder is where the decrypted game, the build and your saves go. Create it before step 3: without it,
+everything goes to a shared folder in `%LOCALAPPDATA%\ProjectNativ` on your C: drive instead.
 
 **2. Install the compiler toolchain** (Clang for Windows, SDL3, zlib and FFmpeg's decoders, at pinned versions). Open
 **Git Bash** in the project folder:
@@ -61,7 +65,8 @@ py -3 -m venv .venv
 ATIV_WIN_TOOLCHAIN="$PWD/toolchain" bash runtime/platform/win/setup-toolchain.sh
 ```
 
-This downloads and builds into `toolchain\`, where the build looks for it.
+This downloads about 190 MB and builds into `toolchain\` (about 1 GB), where the build looks for it. It takes about
+5 minutes.
 
 **3. Prepare the Vita system software.** The game needs some of Sony's system modules, which are taken from the
 firmware file you downloaded:
@@ -71,15 +76,19 @@ firmware file you downloaded:
 ```
 
 **4. Add the game, then its update.** The first command decrypts and keeps the base game. The second adds the 1.05
-update and then builds everything: import, analysis, recompilation and compilation.
+update and then builds everything: import, analysis, recompilation and compilation. The build takes about 15 minutes.
 
 ```powershell
 .\.venv\Scripts\python.exe pipeline\vitarecomp.py add "C:\path\to\base-game.pkg" --license "C:\path\to\work.bin" --no-build
 .\.venv\Scripts\python.exe pipeline\vitarecomp.py add "C:\path\to\update-1.05.pkg"
 ```
 
-Folders copied from a Vita work in place of the PKG files. Your files are only read. Everything the build makes goes
-under `dump\` in the project folder.
+Instead of PKG files you can give the game folders copied from a Vita: `...\app\PCSG00351` for the base game and
+`...\patch\PCSG00351` for the update. If your game is in a ZIP, unpack it first. Your files are only read. The build
+ends with a line starting `built` and the path of `game_host.exe`.
+
+PowerShell shows some of the tools' notes in red, for example one about `sce_sys\about\right.suprx` being skipped.
+That note is expected: the file is not part of the game's code. A step has worked if it ends without an error message.
 
 **5. Play.** Double-click **`Play Phantasy Star Nova.bat`**.
 
@@ -88,9 +97,9 @@ recompile and build stages again and writes a log for each to `dev/psn-logs/`.
 
 ## Playing
 
-The game starts at the Vita's own resolution and 30 FPS. Press **F10** at any time for the in-game menu, and raise
-the resolution (up to 6×) and the frame rate (60 FPS) there. Both are saved for next time. 4× and above need a
-strong GPU.
+The game opens in a 960 × 544 window, the Vita's own resolution, with the frame rate shown in the top-left corner
+(**F1** cycles or hides it). Press **F10** at any time for the in-game menu, where you can raise the resolution (up to
+6×) and turn on 60 FPS. Both are saved for next time. 4× and above need a strong GPU.
 
 | Action | Keyboard and mouse | Controller |
 | --- | --- | --- |
@@ -129,6 +138,7 @@ are, a build from this repository plays in Japanese.
 | Problem | What to do |
 | --- | --- |
 | `no Windows toolchain at …` | Run step 2 again, and check that `toolchain\llvm-mingw` exists. |
+| The firmware or the game went to `%LOCALAPPDATA%\ProjectNativ` | The `dump` folder was missing. Create it (step 1) and run steps 3 and 4 again. |
 | `Python not found` when starting the game | Create `.venv` as in step 1. |
 | The update is refused or asks for a licence | Add the base game first (step 4), with its `work.bin` or `.rif`. |
 | A stage fails during the build | Read its log in `dev/psn-logs/`, or the command's output. Most failures name the file or setting at fault. |
