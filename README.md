@@ -1,145 +1,98 @@
-<p align="center"><img src="assets/brand/banner.svg" alt="Project Nativ: your PS Vita games, rebuilt natively" width="720"></p>
+# Phantasy Star Nova Recomp
 
-# Project Nativ
+**A fork of [Project Nativ](https://github.com/TheLostPantheon/nativ), focused on *Phantasy Star Nova*.**
 
-Project Nativ turns PS Vita games into native programs for macOS, Linux and Windows. You bring your own copy of a
-game. The tools recompile it on your machine, and it runs like any other program, with extras the Vita never had:
-higher resolutions, wider screens, 60 fps and mouse aiming, depending on the game.
+Phantasy Star Nova Recomp runs the Japanese PS Vita release of *Phantasy Star Nova* (tri-Ace / SEGA, 2014) as a
+native Windows program. You bring your own copy of the game. The tools recompile it on your PC, with an English
+localization, higher resolutions, a 60 FPS target, and keyboard, mouse and controller support.
 
-## How it works
-
-A Vita game is ARM code written against Sony's system software. Nativ handles the two separately.
-
-- **The game's code is recompiled.** A static recompiler translates the game's ARMv7 code, Thumb-2, VFP and NEON
-  included, into C once, ahead of time. That C is compiled into a native program.
-- **The system underneath is rebuilt.** Sony's own libraries that a game loads, such as libgxm, libc and FIOS, are
-  recompiled with it from your firmware. Below them, a runtime stands in for the Vita's kernel and hardware: it runs
-  the game's threads, draws its graphics on your GPU and plays its sound.
-
-[How it works](docs/architecture.md) goes into the design.
+It builds on Project Nativ, which recompiles PS Vita games into native PC programs. This fork keeps Nativ's
+recompiler and runtime, and adds the game pack, fixes, tools and Windows release for *Phantasy Star Nova*.
 
 ## Nothing of the game ships
 
-This repository holds no game code, game data or firmware, and nothing we distribute ever will. You supply your own
-copy of each game and Sony's firmware update file, and the tools decrypt and recompile them on your machine.
+This repository holds no game code, game data or firmware. You supply your own copy of the game and Sony's firmware
+update file, and the tools decrypt and recompile them on your machine.
 
-## Supported games
+## Supported version
 
-| Game | Release | Title ID | Versions |
-|---|---|---|---|
-| Killzone: Mercenary | US | PCSA00107 | 1.00, 1.12 (recommended: Botzone and online play) |
-| Uncharted: Golden Abyss | US | PCSA00029 | 1.00 |
-| Unit 13 | US | PCSA00014 | 1.00 |
-| Shovel Knight | US | PCSE00640 | 1.00 |
+| | |
+| --- | --- |
+| Game | *Phantasy Star Nova*, Japan, PS Vita. Title ID `PCSG00351` |
+| Base game and update | 1.00 with the official 1.05 update |
+| System software | PS Vita 3.74 (`PSVUPDAT.PUP`) |
+| Platform | 64-bit Windows 10 or 11 with a Vulkan graphics driver |
 
-Each game's pack supports exact releases, recognised by the SHA-256 of the game's main program. Game-specific fixes,
-such as Killzone's physics fix or the widescreen cameras, patch code at fixed addresses, so they only fit the build
-they were written for. Your game data doesn't need to match; the main program does.
+Other regions, versions and copies that already carry a fan translation are not supported.
 
-Not supported yet: other regions (EU, JP, Asia) and the later updates of Uncharted (1.03), Unit 13 (1.01) and Shovel
-Knight (1.08, Treasure Trove). The launcher recognises them and tells you which release it supports. It keeps an
-unsupported update, and the game runs without it. Porting a new release starts with `dev/hookmap.py`, which carried
-43 of Killzone 1.12's 46 hooks over from 1.00 by matching code.
+## What this fork adds
+
+- **English localization:** menus, dialogue, UI art and movie subtitles, built on your PC from recipes in this
+  repository. Some lines and screens are still Japanese. The original Japanese stays available from the F10 menu.
+- **Rendering:** up to 4× internal resolution, a 60 FPS target, and graphics fixes in the shared runtime (depth clip,
+  deferred draws, GPU lines).
+- **Controls:** keyboard and mouse, and Xbox-style controllers with hot-plugging. The input mode follows the device
+  you used last.
+- **Saves:** a save picker, save backups and deleted-save recovery, with saves kept outside the build.
+- **A Windows release** with one setup program that imports your PKG files, builds the game and installs it. It also
+  exports redacted support reports, and can install signed in-place updates (off until a feed is configured).
+
+## Status
+
+Beta. The Windows release is at 0.1.0 Beta 1. The game is playable in English, with known gaps listed in
+[docs/psnova/README.md](docs/psnova/README.md), the state file for this game.
+
+## Where things are
+
+| Path | What's in it |
+| --- | --- |
+| `packs/PCSG00351/` | The game pack: versions, hooks, function seeds and shader recipes |
+| `dev/psnova/` | Nova tools: text and UI rebuilds, CPK archive tools, movie subtitles, checks |
+| `dev/psnova/release/` | The Windows release layer: setup, launchers, update tooling, player and maintainer guides |
+| `docs/psnova/` | Nova documentation: the state file, journals, investigations and decisions |
+| `Play Phantasy Star Nova.bat` | Starts a development build from `dump\` |
+| `recompiler/`, `runtime/`, `pipeline/`, `decrypt/` | The Project Nativ engine |
 
 ## Getting started
 
-**Players** use the launcher. It walks you through first-run setup, then builds and starts your games. Build it with
-`launcher/build.sh`; the result is `launcher/nativ`.
+**Players** use the Windows release: extract it, run `Setup Phantasy Star Nova.exe` and choose your game files. The
+player guide is [dev/psnova/release/README.md](dev/psnova/release/README.md). How to build a release folder is in
+[MAINTAINER-NOTES.md](dev/psnova/release/MAINTAINER-NOTES.md).
 
-**Developers** can run each stage of the pipeline with `./vitarecomp` from the top of the checkout. Run it without
-arguments for the full list.
-
-On Windows, use the Python driver directly from PowerShell instead of the zsh wrapper:
+**Developers** build from this checkout on Windows:
 
 ```powershell
-.\.venv\Scripts\python.exe .\pipeline\vitarecomp.py --help
+bash dev/psn_build_all.sh                                       # import, analyze, recompile, build
+.\.venv\Scripts\python.exe -s .\pipeline\vitarecomp.py <stage> PCSG00351   # one stage by hand
 ```
 
-Replace `--help` with a stage and its arguments. The Windows player release includes its own Python and toolchain;
-the [developer guide](docs/developers.md#making-a-release) describes building that distribution on macOS or Linux.
+[docs/psnova/README.md](docs/psnova/README.md) explains the setup, and the journal it links covers what was tried
+and the traps to avoid.
 
-The main stages, in order:
+## Relationship to Project Nativ
 
-| Command | What it does |
-|---|---|
-| `firmware <PUP>` | Decrypts Sony's firmware update file. |
-| `scan <folder>` | Finds games, updates and firmware files in a folder, at any depth. |
-| `add <copy>` | Adds a game or its update. `import` takes one that's already decrypted. |
-| `analyze <title>` | Finds the game's functions. |
-| `recompile <title>` | Translates them to C. |
-| `build <title>` | Compiles the game. |
-| `run <title>` | Plays it. |
-| `check <titles>` | Runs the regression gate. |
-
-The pipeline's Python needs the packages in `requirements.txt`, installed in `.venv` at the top of the checkout.
-The Windows player release includes its Python in `python/`.
-
-### Your library
-
-Your games, firmware, licences, builds and saves live in one library folder:
-
-- `dump/` inside a checkout, which git ignores;
-- otherwise your per-user data folder: `~/Library/Application Support/ProjectNativ/Nativ/library` on macOS, under
-  `~/.local/share` on Linux and under `%LOCALAPPDATA%` on Windows;
-- or wherever `ATIV_DUMP` points.
-
-### Installing
-
-`./vitarecomp dist <folder>` writes an install that holds only what ships. Running it again over an install it wrote
-updates the program and leaves your library alone. Two scripts add what a player's machine lacks:
-
-- **Linux:** `dev/linux-install.sh <folder>` adds its own compiler and Python, for machines like the Steam Deck that
-  have neither.
-- **macOS:** `dev/macos-install.sh <folder>` adds SDL, SPIRV-Cross, FFmpeg's H.264 decoder and Python, and a
-  `Project Nativ.app` to start it. The player needs only Apple's Command Line Tools, which the app offers to install.
-  Build the libraries once with `runtime/platform/macos/setup-toolchain.sh`.
-
-The [player guide](docs/player-guide.md) covers the rest from the player's side: first run, controls, online play and
-reporting a bug.
-
-## Repository layout
-
-| Folder | What's in it |
-|---|---|
-| `launcher/` | The launcher (`hub.cpp`): your library, first-run setup and settings. It runs the pipeline for you. |
-| `pipeline/` | The `vitarecomp` driver, plus game and licence handling. |
-| `recompiler/` | The static recompiler, its runtime header `rt.h`, and seeds for functions the analysis misses. |
-| `runtime/` | What a recompiled game runs on: `core/` (kernel and libraries), `gfx/` (graphics), `audio/`, `media/`, `input/`, `net/` (networking and online play), `ui/` (window and in-game menu), `platform/`, `debug/` and `tests/`. `build.py` builds it. |
-| `packs/<title>/` | One folder per game: `pack.toml` (versions, modules, hooks and settings), `hooks.c` (that game's code patches) and `shaders.txt` (its shader recipes). |
-| `decrypt/` | Decrypting firmware updates and game packages, converting SELF to ELF, and the table of Sony's function names. |
-| `servers/` | Killzone's login server stand-in (`kzserver/`) and the relay node for online play (`nativ-node/`). |
-| `dev/` | Developer tools: replays, diffs and bisects, the remote gate, tests and firmware research. |
-| `third_party/` | Dear ImGui, stb, LibAtrac9, Monocypher and the HE-VAG tables, each with its licence. |
-| `docs/` | The documentation listed below. |
-| `assets/brand/` | The logo, wordmark and app icons, all drawn from one geometry by `make.py`. |
-
-## Documentation
-
-- [Player guide](docs/player-guide.md): installing, first run, controls, online play, known issues and bug reports.
-- [How it works](docs/architecture.md): the design, layer by layer.
-- [Working on Nativ](docs/developers.md): the pipeline, packs and versions, and working across machines.
-- [The runtime in detail](docs/runtime.md): display timing, audio, the GPU backend, controls, hooks and metrics.
-- [Verification](docs/verification.md): the regression gate and how the translation and renderer are checked.
-- [Debugging a game](docs/debugging.md): logs, captures, replays and the renderer's switches.
-- [Online play](docs/online.md): matchmaking, finding other players, and the encrypted links between them.
-- [The shader compiler](docs/shader-compiler.md) and [the USSE instruction set](docs/usse-isa.md): the Vita's GPU
-  shaders and how we translate them.
+- The engine (recompiler, runtime, pipeline and decryption) comes from Project Nativ. Its design and developer docs
+  are in [docs/](docs/architecture.md) and upstream at
+  [TheLostPantheon/nativ](https://github.com/TheLostPantheon/nativ).
+- This fork changes the engine where *Phantasy Star Nova* needs it: graphics fixes, saves outside the build, streamed
+  PKG import and the Windows release.
+- Nativ's other game packs (Killzone: Mercenary, Unit 13, Shovel Knight) are still in `packs/` but are not
+  maintained or tested here. The Uncharted pack and its research are not part of this fork.
 
 ## Licence
 
-Project Nativ is free software under the GNU General Public License, version 2 or (at your option) any later version:
-see [LICENSE](LICENSE). Third-party code keeps its own licence, and [THIRD_PARTY.md](THIRD_PARTY.md) lists it with
-the projects parts of Nativ are ported from.
+This fork, like Project Nativ, is free software under the GNU General Public License, version 2 or (at your option)
+any later version: see [LICENSE](LICENSE). Third-party code keeps its own licence, and
+[THIRD_PARTY.md](THIRD_PARTY.md) lists it with the projects parts of Nativ are ported from.
 
-Nativ contains no Sony or game code. You supply your own games and the firmware from Sony's site; the games are
-recompiled on your machine and never leave it.
+It contains no Sony or game code. The English localization rebuilds need the Glenth Regular font, which you supply.
 
 ## AI disclaimer
 
-Nativ is made with the help of AI tools: much of its code and documentation was written with AI assistance, under its
-developer's direction, and tested on the games themselves.
+Like Project Nativ, this fork is made with the help of AI tools: much of its code and documentation was written with
+AI assistance, under its developer's direction, and tested on the game itself.
 
-## Supporting Nativ
+## Credits
 
-Nativ is free, and everything in it is for everyone. If you'd like to support its development, you can leave a tip on
-[Ko-fi](https://ko-fi.com/kingtorro).
+Project Nativ is by its developer at [TheLostPantheon/nativ](https://github.com/TheLostPantheon/nativ). To support
+Nativ itself, see its [Ko-fi](https://ko-fi.com/kingtorro).
