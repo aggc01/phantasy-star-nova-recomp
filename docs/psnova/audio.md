@@ -1,6 +1,6 @@
 # Chopped sound (2026-11-19)
 
-The user: "the audio is messed up", with nine screen recordings (Desktop, `Recording 2026-11-19 1..9.mp4`, 16 minutes).
+Me: "the audio is messed up", with nine screen recordings (Desktop, `Recording 2026-11-19 1..9.mp4`, 16 minutes).
 
 ## What the recordings showed
 

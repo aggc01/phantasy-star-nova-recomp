@@ -66,7 +66,7 @@ what `BasicRubySet` (furigana) holds, how the 512 x 512 page is sampled (format,
 
 ## "Native" English: the Japanese subtitles burned into the story movies (2026-11-18, single run)
 
-The user noticed the English subtitles appear **below the Japanese ones** and wants English to be native (Japanese gone).
+I noticed the English subtitles appear **below the Japanese ones** and want English to be native (Japanese gone).
 Cause, checked on frames: the subtitles in the story movies are **part of the video picture**. Sega's Japanese subtitle line
 is burned in; the fan patch re-encoded the movies and burned its English line under it. Nothing can switch the Japanese off at
 runtime, so the video itself must change.
@@ -136,7 +136,7 @@ Scripts (all in `dev/psnova/`): `subs_rows.py` (which rows hold subtitle-like pi
   from 2048, TOC then ETOC after it, Align 512).
 - **Not installed.** The game still plays the old movie archive (`dump/decrypted/PCSG00351/app0_repatched/`, hard links into the
   rePatch folder: never write into those files). To install: `vitarecomp import` would need a setting that swaps this archive in
-  (sibling of `REPATCH_KEEP`, e.g. `MOVIE_OVERRIDE`) or a copy placed over the hard link; decision and test run pending the user's go-ahead.
+  (sibling of `REPATCH_KEEP`, e.g. `MOVIE_OVERRIDE`) or a copy placed over the hard link; decision and test run pending my go-ahead.
 - **Test-run etiquette (from the recomp session, 2026-11-18):** it runs `RECOMP_BIN=dev vitarecomp test PCSG00351` (about 16 min each, same folder
   `dump/decrypted/PCSG00351/recomp/test_dev_win` and `game_dev.exe` every time). Ask it before any install or game run and wait for "machine free".
   A parallel run may use `RECOMP_BIN=l10n` (`game_l10n.exe`, `test_l10n_win`): this runtime's `plat_gpu_cache_private()` keeps the NVIDIA cache in
@@ -150,7 +150,7 @@ Scripts (all in `dev/psnova/`): `subs_rows.py` (which rows hold subtitle-like pi
    (the `REPATCH` layer on or off, per run). Voices stay Japanese either way.
 2. **Arabic**: needs three pieces
    - a text export of all ~20,000 `.rmd` (decode glyph indices -> Unicode using the font map; menus/short labels get a first-pass translation,
-     the user fills dialogue, as for Wonder; see `memory: every-recomp-standard`);
+     I fill dialogue, as for Wonder; see `memory: every-recomp-standard`);
    - an Arabic **font** with joined/contextual forms (presentation forms) added to the game's font texture + glyph map;
    - **right-to-left layout** (reverse order, mirrored alignment) in the text drawing code, and a re-encoder that writes
      `.rmd` files back with the new glyph codes, then a patched archive (`cpk_merge.py` already copies/merges entries).
@@ -164,30 +164,30 @@ Reusable reference: `Super Mario Bros Wonder\tools\arabic\README.md` (pipeline f
 - The rule (2026-11-18): **use scripts for repeatable work when possible**. So far everything was done by
   scripts (`cpk.py list/extract`, `xxd`, `grep -a`). Bulk work to come (decode ~20,000 messages, code tables, Arabic
   export workbook) is script work; spot-check and indexing results are verified before use.
-- Document every step in this file (the user asked, 2026-11-18).
+- Document every step in this file (I asked, 2026-11-18).
 
 ## Log
 
 - 2026-11-18 (evening): recomp session informed (it committed 527045b with the first notes; its REPATCH_KEEP layering is in `vitarecomp import`).
   Built `subs_rows.py`, `remove_jp_subs.py` (3 detection fixes), `run_remove_jp_subs.sh`, `verify_clean_movies.py`, `cpk_replace.py`;
   8 cleaned movies + patched movie archive in `dump/psnova-l10n/`. Not installed, not played.
-- 2026-11-18 (later): user asked for "native" English; confirmed Japanese hard subtitles in the 8 patched story movies,
+- 2026-11-18 (later): I asked for "native" English; confirmed Japanese hard subtitles in the 8 patched story movies,
   inpaint test on 3 frames looked clean, found a libx264 ffmpeg. Nothing in the game or build changed.
 - 2026-11-18: surveyed archives, extracted `msg_100001.rmd` (JP and EN), `novamessagedictionary.mdic`, `guide_message_parameter.csv`
   to `dump/psnova-l10n/sample/`; found the glyph-index text format. Nothing in the game or build was changed.
 
 ## Decision 2026-11-18 evening: Japanese-only base + our own overlay
 
-User decision (relayed by the recomp session): the game runs only from the Japanese app0_patched (game + 1.05, no rePatch); burned-in movie subtitles are removed and English + Arabic are added by us.
+My decision (relayed by the recomp session): the game runs only from the Japanese app0_patched (game + 1.05, no rePatch); burned-in movie subtitles are removed and English + Arabic are added by us.
 - Import change (made by this session, uncommitted): `packs/PCSG00351/pack.toml` `REPATCH = "off"` (same as RECOMP_NO_REPATCH=1); `pipeline/vitarecomp.py` cmd_import also layers `$W/overlay0/` (same layout as app0, hard links, never writes into sources) into `app0_overlay` after any rePatch; `RECOMP_NO_OVERLAY=1` skips it. overlay0 does not exist yet: import now gives exactly app0_patched. I did not run `vitarecomp import` (recomp session re-points its tests).
-- CONSEQUENCE for movies: the 8 cleaned movies in `dump/psnova-l10n/movies_clean/` were made from the rePatch movies (English burned in, Japanese removed). Under Japanese-only the source must be the ORIGINAL Japanese movies (base `NOVA_FileList_Vita_movie.cpk`) with the Japanese line removed; there is no English line to key detection on, so `remove_jp_subs.py` needs a new presence detector (Japanese strokes alone, persistence, etc.). The old output is only a stopgap (it would show the fan English line). Nothing goes into overlay0 until the user says go and the recomp session says the machine is free.
+- CONSEQUENCE for movies: the 8 cleaned movies in `dump/psnova-l10n/movies_clean/` were made from the rePatch movies (English burned in, Japanese removed). Under Japanese-only the source must be the ORIGINAL Japanese movies (base `NOVA_FileList_Vita_movie.cpk`) with the Japanese line removed; there is no English line to key detection on, so `remove_jp_subs.py` needs a new presence detector (Japanese strokes alone, persistence, etc.). The old output is only a stopgap (it would show the fan English line). Nothing goes into overlay0 until I say go and the recomp session says the machine is free.
 
-## Survey of the 13 movies without a burned-in subtitle line (2026-11-18 evening, user asked "will all movies be subtitled?")
+## Survey of the 13 movies without a burned-in subtitle line (2026-11-18 evening, I asked "will all movies be subtitled?")
 
-Goal restated by the user: by the end, every movie must be correctly subtitled/localized in English and Arabic. Removing the Japanese line from the 8 story movies is only step 1; adding English/Arabic text is separate and not built. Tool: `dev/psnova/survey_other_movies.py` (audio per second + contact sheet every 3 s; outputs `dump/psnova-l10n/others/<name>_sheet.png`, `_audio.txt`). No speech model is installed, so "does it speak" is judged from the sheets; the audio numbers are weak (dialogue movies ~0.35 syllable-rate modulation, these 0.20-0.32).
+Goal restated by me: by the end, every movie must be correctly subtitled/localized in English and Arabic. Removing the Japanese line from the 8 story movies is only step 1; adding English/Arabic text is separate and not built. Tool: `dev/psnova/survey_other_movies.py` (audio per second + contact sheet every 3 s; outputs `dump/psnova-l10n/others/<name>_sheet.png`, `_audio.txt`). No speech model is installed, so "does it speak" is judged from the sheets; the audio numbers are weak (dialogue movies ~0.35 syllable-rate modulation, these 0.20-0.32).
 - Silent (no audio at all): Attention, Logo_SEGA_triAce, Trial_005, Trial_Attention, Trial_End (Attention/Trial_Attention/Trial_End carry baked text: check what language; Trial_End has many text rows).
 - MP09_030_030, MP09_040_030: pure CG (planet, no characters on screen). MP09_040_025: a few characters, a hologram figure; no subtitle line. Whether any of these has spoken lines is UNVERIFIED (needs listening or a speech model). They differ from the 8 story movies in that the fan patch left them untouched.
-- OpeningDemo (140 s): in-universe decorative script (cyan glyphs in a fictional alphabet) shown as titles/narration lines; no Japanese subtitle line. Not obviously translatable; ask the user whether it should be (does the voice speak these lines?).
+- OpeningDemo (140 s): in-universe decorative script (cyan glyphs in a fictional alphabet) shown as titles/narration lines; no Japanese subtitle line. Not obviously translatable; ask me whether it should be (does the voice speak these lines?).
 - Trial_001..Trial_004 (25-47 s each): in-engine tutorial captures (HUD) with BAKED JAPANESE instruction text in a box at the bottom (y ~ 465-530) plus a Japanese title card (e.g. "(1) new weapon description"). These are a different localization job (translate + redraw a text box over gameplay footage), not a line removal. Unknown whether the game plays them (Trial = trial version content?).
 - Credits are textures (Credit_0000.aif..), another localization item.
 So "all movies subtitled" splits into: (a) 8 story movies (remove JP, add EN/AR subtitles from the line text), (b) Trial_001-004 (redraw instruction box), (c) possibly OpeningDemo / the 3 other MP09 CGs if they have speech. Open: which of these the game actually plays.
@@ -208,9 +208,9 @@ Priority: Attention (retail boot, trivial redraw) > story movies (8) > Trial_* f
 ### Movies actually played in the recomp session's scripted run (its message 2026-11-18 evening; test55, Japanese files, title -> arena, frame 25,000)
 File opens show only NOVA_FileList_Vita_movie.cpk (the AvPlayer reads inside it), so names are inferred from the 5 'avPlayer Controller' threads started: (1) frames 0-300 boot = Attention (anti-piracy notice), (2) 300-600 = Logo_SEGA_triAce, (3) 600-900 = OpeningDemo (Start skips it), (4) ~1800-2100 after NEW GAME = MP00_000_000 (story intro), (5) ~13,500-13,800 after the character-creation save = warp cutscene with a burned-in line, probably MP00_000_010 (unconfirmed). No movie plays in the ship corridor / arena tutorial (in-engine scenes). Consequence: Attention is confirmed played at every boot (redraw first); MP00_000_000 and MP00_000_010 are the first two story movies a player meets. Exact names would need an AvPlayer source log (RECOMP_LOG_IMPORTS=sceAvPlayerAddSource plus printing the path): offered by the recomp session, not requested yet.
 
-## Movies v2: the ORIGINAL Japanese movies cleaned (2026-11-18 evening, user said "yes, redo them")
+## Movies v2: the ORIGINAL Japanese movies cleaned (2026-11-18 evening, I said "yes, redo them")
 
-Result: `dump/psnova-l10n/movies_clean_jp/*.mp4` (8 cleaned story movies) and `dump/psnova-l10n/movie_cpk_jp/NOVA_FileList_Vita_movie.cpk` (452,742,240 bytes, the game's own archive with those 8 entries replaced, all 21 entries read back equal). **NOT installed, NOT played in the game.** Install = put the file in `$W/overlay0/` (W = dump/decrypted/PCSG00351), run `vitarecomp import`; needs the user's go-ahead and the recomp session's "machine free". The older `movie_cpk/` archive (made from the rePatch movies, English line still in) is obsolete.
+Result: `dump/psnova-l10n/movies_clean_jp/*.mp4` (8 cleaned story movies) and `dump/psnova-l10n/movie_cpk_jp/NOVA_FileList_Vita_movie.cpk` (452,742,240 bytes, the game's own archive with those 8 entries replaced, all 21 entries read back equal). **NOT installed, NOT played in the game.** Install = put the file in `$W/overlay0/` (W = dump/decrypted/PCSG00351), run `vitarecomp import`; needs my go-ahead and the recomp session's "machine free". The older `movie_cpk/` archive (made from the rePatch movies, English line still in) is obsolete.
 
 - Source: `movies_jp/` = all 21 entries extracted from app0_patched's NOVA_FileList_Vita_movie.cpk (395,112,448 bytes, Sony's own). The same 8 movies carry a Japanese line (rows ~464-499); the 13 others have none (see the survey sections below).
 - Why v1 failed on originals: it keyed on the English line the fan patch added, and its "white fill + dark outline" test misses the text on bright backgrounds (the subtitle has only a soft shadow there). The old English-line mask was also unreliable (missed lines on bright backgrounds, e.g. MP06_030_050 frames 234-538).
@@ -225,7 +225,7 @@ Result: `dump/psnova-l10n/movies_clean_jp/*.mp4` (8 cleaned story movies) and `d
 
 ## Attention redraw (English + Arabic), 2026-11-18 night
 
-`Attention.mp4` is the anti-piracy notice the game plays at every boot. The user said go. It is redrawn, not cleaned,
+`Attention.mp4` is the anti-piracy notice the game plays at every boot. I said go. It is redrawn, not cleaned,
 because it is only text on black.
 
 - Script: `dev/psnova/redraw_attention.py` (run `python dev/psnova/redraw_attention.py [en] [ar]`). It only reads
@@ -259,7 +259,7 @@ because it is only text on black.
 - Not checked in the game (no run was made). The H.264 settings match the original's, so the firmware AvPlayer should
   take it, but that is unverified until a run.
 
-## Movies v2 installed and tested in the game (2026-11-18, 22:10-22:45, user said "Yes" to install and test)
+## Movies v2 installed and tested in the game (2026-11-18, 22:10-22:45, I said "Yes" to install and test)
 
 - **Installed:** `dump/decrypted/PCSG00351/overlay0/NOVA_FileList_Vita_movie.cpk` (a copy of `movie_cpk_jp/`'s, 452,742,240 bytes). `vitarecomp import` layered it: `app0_overlay` = app0_patched's 78 files with only this one different (file lists compared, the archive compared with cmp), and `recomp/fs/app0` now points at `app0_overlay`. Undo: `RECOMP_NO_OVERLAY=1 vitarecomp import` (re-points app0 at app0_patched). All PS Nova sessions told.
 - **Test runs** (separate exe, nothing of the recomp session's touched): `game_l10n.exe` = a copy of the 19:12 `game_host.exe`; `RECOMP_BIN=l10n ... vitarecomp test PCSG00351` (folder `recomp/test_l10n_win`, fresh save each run, so no save backup was needed).
@@ -268,10 +268,10 @@ because it is only text on black.
 - **The game shows exactly what the file holds:** each screenshot was matched to its frame of the cleaned movie (dev/psnova/match_game.py; e.g. game 2900 = movie frame 895); the game's band and the file's band are the same picture. So the decoder and the archive are fine and every flaw below is in the cleaning.
 - **Flaws seen in the game (the cleaning is NOT good enough yet):**
   1. **Text left at line fades/changes.** Game 2900 = movie frame 895: about half of "全宇宙の平和を……』" is still there. c2_MP00_000_000.npz: kept pixels 4,003 at frame 892, 35 at 896, 0 at 900; the frame is marked "present" but the mask is nearly empty, because a pixel must be above the threshold in 8 of 11 frames and a fading line fails that. Fix: build one mask per LINE (from its full-strength frames) and apply it to every frame of the line, fades included.
-  2. **Visible smears.** The mask (strokes dilated 9x9) joins a line's glyphs into one solid strip, and Telea fills it from the edges: blurred, streaky strips in game 2200, 2800, 3400 and worst in 4600-5000 (a near-still planet scene, where the smear is a plain horizontal band). Fix: a tighter mask, and fill from other frames (in still or slow scenes the true background is in frames before or after the line, or under the line in frames where the text has moved on); spatial inpaint only as a last resort. The best quality would be a video-inpainting model (ProPainter or E2FGVI: flow-guided, fills from neighbouring frames); that needs a model download (user's decision).
+  2. **Visible smears.** The mask (strokes dilated 9x9) joins a line's glyphs into one solid strip, and Telea fills it from the edges: blurred, streaky strips in game 2200, 2800, 3400 and worst in 4600-5000 (a near-still planet scene, where the smear is a plain horizontal band). Fix: a tighter mask, and fill from other frames (in still or slow scenes the true background is in frames before or after the line, or under the line in frames where the text has moved on); spatial inpaint only as a last resort. The best quality would be a video-inpainting model (ProPainter or E2FGVI: flow-guided, fills from neighbouring frames); that needs a model download (my decision).
 - Scripts kept: dev/psnova/sheet_test.py (contact sheet of a test folder), band_test.py (subtitle-band strips), match_game.py (game shot -> movie frame, band comparison).
 
-## The text sheet (2026-11-18 night, user: "Build the text sheet first")
+## The text sheet (2026-11-18 night, me: "Build the text sheet first")
 
 **Result:** `dump/psnova-l10n/sheet/psnova_text_v1.xlsx` (sheet "messages": one row per message, sheet "tags": what the
 {tags} mean), the same as UTF-8 `psnova_text_v1.tsv`, and `psnova_text_v1_tokens.json` (parsed codes per message, for the
@@ -293,7 +293,7 @@ text height px, JP lines, Japanese (original), English (fan rePatch, to revise),
   (`charactermake_resource_database_*.csv`, which have ja_name and en_name columns).
 - Movie lines: not in the sheet yet (they are only pixels in the 8 story movies; they need reading from the frames).
 
-## The re-encoder: translated text back into the game (2026-11-18 night to 2026-11-19, user: "Build the re-encoder")
+## The re-encoder: translated text back into the game (2026-11-18 night to 2026-11-19, me: "Build the re-encoder")
 
 **Result: English and Arabic text from the sheet now reach the game.** Details, rules and proofs: docs/psnova/text-format.md
 ("Writing message files"). Tools: dev/psnova/rmdtext/rmdwrite.py, encode_text.py, arabic.py, build_l10n.py, roundtrip.py,
@@ -313,15 +313,15 @@ dev/psnova/cpk_build.py.
 - Code review (30 passes) confirmed 24 problems in the first version; all fixed before test 2.
 - Arabic method: our own shaping (presentation forms) and bidi (arabic.py), drawn with Segoe UI Bold 16 px as each file's
   own glyph pictures (word pictures, or letter-form pieces when a message has too many words for a 256x128 atlas).
-- Open: Arabic text for the sheet (first pass: menus/short labels; user: dialogue), a language choice (one overlay per
+- Open: Arabic text for the sheet (first pass: menus/short labels; me: dialogue), a language choice (one overlay per
   language + a launcher/ini setting), very long Arabic help texts (more than ~85 pieces do not fit one atlas), the 8 movie
   lines, right alignment (lines start at the box's left edge; centred dialogs centre them).
 
-## Arabic for menus and short labels (2026-11-19, user: "Arabic for menus")
+## Arabic for menus and short labels (2026-11-19, me: "Arabic for menus")
 
 **Result: sheet v2 (`dump/psnova-l10n/sheet/psnova_text_v2.xlsx` / `.tsv`) has Arabic in 8,581 rows** (8,201 different
 texts): every short, one-line, non-dialogue message. The notes column marks them as Arabic menu pass 1.
-Dialogue, long help texts, spoken one-liners and credits are left for the user (rules in docs/psnova/arabic-style.md).
+Dialogue, long help texts, spoken one-liners and credits are left for me (rules in docs/psnova/arabic-style.md).
 
 Steps and tools (all in `dev/psnova/rmdtext/`, work files in `dump/psnova-l10n/ar/`):
 1. `sheet_groups.py` lists the sheet by id range (groups.json); `pick_short.py` picks the rows: id under 12 digits, one
@@ -372,7 +372,7 @@ were translated from the Japanese only.
 - Still open (seen in both): text starts at the left edge of each box (Arabic should be right-aligned; needs the box
   width from the game's layout, not the message file); the game's 2-column race rows read «ذكر ... بشري» right to left.
 
-## The language switch (2026-11-19, user: "Language switch then Right alignment")
+## The language switch (2026-11-19, me: "Language switch then Right alignment")
 
 **Design: per-language file overlays chosen at start, picked in the in-game menu.**
 - `dump/decrypted/PCSG00351/lang/<code>/` holds files laid out as app0 that replace the game's own for that language, plus
@@ -390,7 +390,7 @@ were translated from the Japanese only.
     only when fs/lang has folders; "Applies the next time the game starts" (the game keeps its archives open).
 - Built so far only into `game_l10n.exe` (RECOMP_BIN=l10n, 05:08); game_host.exe gets it at the recomp session's next build.
   The shared recomp/fs/ is not changed yet: re-import (which also links fs/lang) waits until the player exe has the code
-  and the user is not playing.
+  and I am not playing.
 - Planned with it: the cleaned movie archive moves from overlay0 (all languages) into lang/en and lang/ar only (already
   hard-linked there), so Original plays Sega's movies with their Japanese subtitles; overlay0 then holds nothing.
 - Limits: a folder listing of app0 still shows app0's own entries (overlays only replace existing files; fine for CPK
@@ -432,7 +432,7 @@ Done (the recomp session agreed and paused its builds for the recompile):
   are no longer chosen by the encoder. 4 fan-English files contain such a code (the game shows 2 wrong glyphs there).
 - The game lays out at most 128 glyphs per message; the encoder records the count (Encoder.last_drawn).
 
-## Movies v3: no flash at line fades (2026-11-19, user: "the Japanese subtitles are showing for a split second before fading out")
+## Movies v3: no flash at line fades (2026-11-19, me: "the Japanese subtitles are showing for a split second before fading out")
 
 New dev/psnova/remove_jp_subs_v3.py (one mask per line, applied to the whole line plus >= 8 fade frames each side)
 and check_sub_residue.py; details and per-movie numbers docs/psnova/movie-cleaning-v3.md. Residue frames over the 8 movies:
@@ -441,7 +441,7 @@ fixed yet. Archive: `python -I dev/psnova/cpk_replace.py $W/app0_patched/NOVA_Fi
 <name>=dump/psnova-l10n/movies_clean_jp_v3/<name> ...` (452,248,432 bytes, 21 entries read back equal), now in lang/en and
 lang/ar (hard links). Original (no language) plays Sega's own movies.
 
-## Deployed to the play copy, English by default (2026-11-19 06:32, user: "Yes, start in English" / "but i should be able to set a default language easily")
+## Deployed to the play copy, English by default (2026-11-19 06:32, me: "Yes, start in English" / "but i should be able to set a default language easily")
 
 - **Default language file:** `dump/decrypted/PCSG00351/lang/default.txt`, first word `en` (or `ar`, or `original` for the
   Japanese game). `vitarecomp import` copies it to `recomp/fs/lang/default.txt` (editing that copy works directly too).
@@ -451,19 +451,19 @@ lang/ar (hard links). Original (no language) plays Sega's own movies.
   app0_patched (Sony's 1.05 files), fs/lang/{en,ar} + default.txt. Saves and settings backed up first to
   dump/psnova-l10n/save_backups/*-20261119-0631. settings.ini left as it was (menu_hint_shown, frame_rate = 60).
 - game_host.exe rebuilt 06:34 (runtime only; game C recompiled 06:00 with the psn_rtl hooks; includes the recomp session's
-  renderer fixes, which it approved for the user).
+  renderer fixes, which it approved for me).
 - Tests stay Japanese: fresh_fs links languages only with `TEST_LANG=<folder>` or `TEST_LANG=game` (the player's fs/lang).
 - Checked 2026-11-19 ~07:05 (local tools, `RECOMP_BIN=l10n TEST_LANG=game`, no language set): the log says "language en:
   files in lang/en replace the game's own"; the character-creation menu is English and left-aligned (no Arabic mark);
   shot dump/psnova-l10n/ingame_default_en/z_menu.png.
 
-## Separated from the Uncharted folder (2026-11-19 ~06:40-07:00, user: "only work in your folder (only work in Drive F) and separate your work from Uncharted cleanly")
+## Separated from the Uncharted folder (2026-11-19 ~06:40-07:00, me: "only work in your folder (only work in Drive F) and separate your work from Uncharted cleanly")
 
 Own repository, own Python (tools/python + .venv), own toolchain copy, own ffmpeg, scratch on F; Uncharted keeps the
 psnova branch as an archive and lost only PS Nova's worktree registration. Full record, proofs and undo:
 docs/psnova/separation-from-uncharted.md. From now on run Python as `.venv/Scripts/python.exe -s` from this folder.
 
-## User report 2026-11-19 ~07:45: "The warning is still in Japanese, some tutorials are still not translated, and movies are not translated with subtitles!"
+## My report 2026-11-19 ~07:45: "The warning is still in Japanese, some tutorials are still not translated, and movies are not translated with subtitles!"
 
 **1. Warning screen (Attention.mp4, every boot).** The English/Arabic redraws (movies_l10n/Attention_{en,ar}.mp4, made
 2026-11-18 night) had never been put into an archive. Now each language has its own movie archive:
@@ -494,11 +494,11 @@ the English or the Japanese.)
   of the line table had no text = detections of glow, not lines).
 - `dev/psnova/burn_subs.py`: draws each line where the Japanese line was, white Segoe UI Semibold/Bold 24 px with a dark
   outline on a soft rounded 58 % black strip as wide as the text or the old Japanese line (+30 px), so it also hides the
-  inpainting smears there (the user's "two birds" idea); 6-frame fades over the line's own time; Arabic shaped by
+  inpainting smears there (my "two birds" idea); 6-frame fades over the line's own time; Arabic shaped by
   arabic.py. `dev/psnova/run_burn_subs.sh` burns all 8 movies per language and builds movie_cpk_<lang>.
 - Fonts now come from tools/fonts/ (local copies of Segoe UI Bold/Semibold). Licensing note from the recomp session:
   Segoe UI is Microsoft's; for a published translation an openly licensed (OFL) Arabic font would be safer (needs a
-  download -> the user's OK).
+  download -> my OK).
 - Installed 2026-11-19 08:09 in lang/en and lang/ar: text archives from sheet v4 (en 17,301 / ar 17,675 messages, 0
   failed) and the subtitled movie archives (8 story movies x 2 languages burned with run_burn_subs.sh, all frame counts
   equal; Attention_<lang> included). NOT yet tested in the game (usage limit reached before the run): next = one Arabic
@@ -521,7 +521,7 @@ the English or the Japanese.)
   find how these CSV strings reach the font (an SJIS -> glyph code path) before choosing a fix (replace the CSV text with
   an English name, or route it to a message / our glyph pictures for Arabic).
 
-## Full translation pass (2026-11-19 ~09:40-10:20, user: "Yes, translate them")
+## Full translation pass (2026-11-19 ~09:40-10:20, me: "Yes, translate them")
 
 - `dev/psnova/rmdtext/make_batches_full.py` picked every message with Japanese text and no usable English (empty, same as
   the Japanese, or still Japanese), minus developer dummies and punctuation: **7,196 messages** (6,814 also without
@@ -542,9 +542,9 @@ the English or the Japanese.)
   Arabic quest banners and objectives in the arena; the story dialogue the fan patch had translated shows in English
   (no Arabic for it yet); nothing broken seen.
 
-## English font replaced with Glenth (2026-11-19 ~12:00, user: "use the fonts in the folder Glenth to replace the English fonts")
+## English font replaced with Glenth (2026-11-19 ~12:00, me: "use the fonts in the folder Glenth to replace the English fonts")
 
-The user's font `Glenth/glenthregular.ttf` (also glenth.otf; a thin serif display font, no `~ < >`) now draws all English:
+My font `Glenth/glenthregular.ttf` (also glenth.otf; a thin serif display font, no `~ < >`) now draws all English:
 in-game text (new: the encoder draws each English character as a glyph picture, 18 px, baseline 16; before, the game's
 own fixed-width letters were used), the movie subtitles (28 px) and the warning screen (heading "Notice"). All fonts are
 now set in one file, dev/psnova/fonts.json; how-to and limits in docs/psnova/fonts.md. Rebuilt and installed 12:15:
@@ -554,7 +554,7 @@ movies_l10n/Attention_en_segoe.mp4.
 screen, the movie subtitles, every menu row, the race/class lists and help boxes, Yes/No dialogs, dialogue boxes and
 name plates, and the arena quest banner; readable at the game's size; nothing broken seen.
 
-## User screenshots 2026-11-19 ~12:30-13:10: Japanese still visible, tutorial pages cut off
+## My screenshots 2026-11-19 ~12:30-13:10: Japanese still visible, tutorial pages cut off
 
 - **Tutorial pages cut off mid-sentence** ("Combine normal attacks a", "While you hold"): the game lays out at most 128
   glyphs per message, and since English letters became one Glenth picture each, every letter and space counted (595
@@ -575,13 +575,13 @@ name plates, and the arena quest banner; readable at the game's size; nothing br
 - **Japanese drawn inside pictures** (UI textures, research docs/psnova/ui-textures-research.md and ui-strings-research.md):
   menu banners (キャラクタークリエイト, 設定/ヘルプ: tex_nova_ui_Title.aif), the button guide (カメラ初期化, ズーム:
   tex_nova_ui_common.aif), chapter title cards (「惑星の洗礼」: tex_Chapter.aif), the title screen and a few more (9 core
-  textures), plus 83 tutorial screenshots (ソード, パルチザン, 素手, メインパレット, the settings screen...). Not started: the
-  user was asked which font to use for pictures (they declined adding Glenth for UI pictures to fonts.json for now).
-- Installed 13:08: lang/ar text archive (word pictures + larger atlases + name tables); lang/en installed after the user closed
+  textures), plus 83 tutorial screenshots (ソード, パルチザン, 素手, メインパレット, the settings screen...). Not started:
+  I was asked which font to use for pictures (I declined adding Glenth for UI pictures to fonts.json for now).
+- Installed 13:08: lang/ar text archive (word pictures + larger atlases + name tables); lang/en installed after I closed
   the game (rebuilt with build_l10n.py --extra-dir dump/psnova-l10n/name_tables). Earlier note: lang/en could not be replaced
-  while the user's game_host.exe was running; rebuilding it (dump/psnova-l10n/build/en8) to install after the game closes.
+  while my game_host.exe was running; rebuilding it (dump/psnova-l10n/build/en8) to install after the game closes.
 
-## Japanese inside pictures redrawn (2026-11-19 ~13:30-15:30, user: "Glenth")
+## Japanese inside pictures redrawn (2026-11-19 ~13:30-15:30, me: "Glenth")
 
 - Spec format and tools: `dev/psnova/uitex/SPEC.md`, `apply_spec.py` (decode .aif, clear the Japanese -- transparent /
   inpaint / fill / per-row fills --, draw Glenth (English) or Segoe UI Bold with our Arabic shaping, re-encode DXT3 with
@@ -603,7 +603,7 @@ name plates, and the arena quest banner; readable at the game's size; nothing br
   (Rietheia, Fildia), quest banner and dialogue fine, no broken message boxes with the larger atlases on the route.
   Not reached by the route: tutorial pages with pictures, chapter title cards (checked only in the review previews).
 
-## Text faults from the user's evening recordings (2026-11-19 ~18:00; found by the recomp session: docs/psnova/text-render-faults.md)
+## Text faults from my evening recordings (2026-11-19 ~18:00; found by the recomp session: docs/psnova/text-render-faults.md)
 
 - **Shadow beside the letters / cutscene subtitles at mixed sizes:** the game draws each glyph's 4 shadow copies offset by
   5 % of the glyph's own width/height, and the cutscene subtitle drawer fits every glyph into a 21-px cell. Our word /
@@ -613,16 +613,16 @@ name plates, and the arena quest banner; readable at the game's size; nothing br
   game's own glyphs. Wider slices (32/48/96/255) only when a message would pass 128 glyphs or not fit a 512x512 atlas;
   the longest tutorial pages come to 79-104 slices at 21 px. Copy of the encoder before: scratch/encode_text_before_slices.py.
 - **® box** in "PlayStation®Vita": ® © ™ added to fonts.json game_english "fallback" (the game's own ® picture is used).
-- Chapter card glow: the user's screenshot predates the redrawn tex_Chapter.aif (15:09), whose Japanese pieces are
+- Chapter card glow: my screenshot predates the redrawn tex_Chapter.aif (15:09), whose Japanese pieces are
   transparent; to confirm in a test.
-- OpeningDemo subtitles (user asked the recomp session): the lines are in the game's fictional alphabet, no voice;
-  asked the user before decoding.
+- OpeningDemo subtitles (I asked the recomp session): the lines are in the game's fictional alphabet, no voice;
+  asked me before decoding.
 - Archives with the 21-px slices installed 20:08 (0 messages over 128). **Test 11** (English, game_l10n.exe = the 20:29
   game_host; shots dump/psnova-l10n/ingame_text11/, zoom z_slices.png): dialogue box, menu rows and the arena objective
   draw seamlessly from the slices with a tight shadow (no dark copy beside the words any more). Cutscene subtitles and
   the chapter card are not on the scripted route.
 
-## Arabic recordings review (2026-11-19 ~21:30; recomp session's findings from the user's 6 recordings, Arabic mode)
+## Arabic recordings review (2026-11-19 ~21:30; recomp session's findings from my 6 recordings, Arabic mode)
 
 - **Detached full stops / a lone bracket** ("تحقق الهدف . مسموح ..." , "قطعة غران ) (جليد"): the last 21-px slice of a
   picture was padded with empty columns, so a game-font full stop or bracket after it stood apart. Fixed: slices now
@@ -635,7 +635,7 @@ name plates, and the arena quest banner; readable at the game's size; nothing br
   name on their left: «ارتفع مستوى» + name, «بلغت العلاقة [صديق مقرب] مع» + name, «تم الحصول على» + item, etc.
   (dump/psnova-l10n/fixes/ar_fragments.json -> **sheet v6**).
 - Open: the mission-prep team panel's Japanese names (ルティナ, ヒューマー): no table or message holds ヒューマー; likely
-  names stored in the save when crew joined (the user's save predates the English name tables) -- needs a screenshot /
+  names stored in the save when crew joined (my save predates the English name tables) -- needs a screenshot /
   a new save to confirm. The enemy name beside the TARGET marker is still squeezed (a drawer that scales glyphs to a
   small fixed cell; to look at with a frame). Dialogue bodies and cutscene subtitles are English in Arabic mode (their
   Arabic is not written yet: ~9,900 messages). EXP / CHAIN / DAMAGE popups, QUEST CLEAR / EMERGENCY CODE / NOW LOADING

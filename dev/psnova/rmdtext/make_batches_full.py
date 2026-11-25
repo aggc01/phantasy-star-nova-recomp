@@ -1,4 +1,4 @@
-"""Batches of every message still without English, for the full translation pass (2026-11-19, user: "Yes, translate them").
+"""Batches of every message still without English, for the full translation pass (2026-11-19, me: "Yes, translate them").
 usage: python make_batches_full.py <sheet.tsv> <out dir> [items per batch=80]
 
 A row is taken when it has Japanese text, its English is empty / identical to the Japanese / still holds Japanese, and

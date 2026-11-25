@@ -2,7 +2,7 @@
 
 Why v3: v2 (remove_jp_subs_v2.py) built its mask PER FRAME from pixels that are white in >= 8 of the 11 frames around the
 frame. At the first and last 2-3 frames of every line (and during any fade) fewer than 8 of the 11 frames hold the text, so
-the mask there was empty or partial and the text stayed: the user saw "the Japanese subtitles showing for a split second"
+the mask there was empty or partial and the text stayed: I saw "the Japanese subtitles showing for a split second"
 (docs/psnova/localization-notes.md, "Movies v2 installed and tested", flaw 1). v2 also filled every mask with Telea, which
 smears (flaw 2). Notes: docs/psnova/movie-cleaning-v3.md.
 

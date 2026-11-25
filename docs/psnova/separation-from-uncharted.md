@@ -1,6 +1,6 @@
 # Phantasy Star Nova: separated from the Uncharted folder (2026-11-19)
 
-User's instruction: "only work in your folder (only work in Drive F) and separate your work from Uncharted cleanly",
+My instruction: "only work in your folder (only work in Drive F) and separate your work from Uncharted cleanly",
 done by the localization session together with the PS Nova recomp session (it agreed to every step and paused git work);
 the Uncharted RT session was told and confirmed nothing of Uncharted depends on PS Nova.
 
@@ -31,7 +31,7 @@ session ran its own check build with the new defaults.
 4. In the Uncharted repo: removed **only** `.git\worktrees\Phantasy-Star-Nova-Recomp` by hand (no `git worktree prune` /
    `remove`: the RT, Native and add-game-fix worktrees, the last with uncommitted work, are registered there too).
    `git worktree list` there now shows main, add-game-fix, native-renderer, raytracing.
-5. **Kept on purpose:** the `psnova` branch in the Uncharted repository, as an archive (deleting it is the user's call).
+5. **Kept on purpose:** the `psnova` branch in the Uncharted repository, as an archive (deleting it is my call).
    Uncharted's `.venv`, `toolchain\` and `tools\` were not touched (the RT copy's tools\ and toolchain\ are junctions into
    them).
 
@@ -49,7 +49,7 @@ in the working copy too. Lesson: write files with `open(p, 'w', newline='\n')` o
 ## Still outside F: or outside this folder
 
 - The game itself was decrypted from `F:\RECOMP GAMES\Phantasy Star Nova (v1.05)` (F:, read only).
-- The user's reference frames from a real Vita playthrough at `C:\New PATH\screenshots` (1.4 GB, read by the recomp
-  session): the user's files; not moved (asked the user).
+- My reference frames from a real Vita playthrough at `C:\New PATH\screenshots` (1.4 GB, read by the recomp
+  session): my files; not moved (asked me).
 - The development tools' own memory notes and session transcripts live in `C:\Users\<user>\.claude` (the app's place, not ours).
 - Cross-session coordination and the in-app task list: no files.

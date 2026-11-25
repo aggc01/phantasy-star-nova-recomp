@@ -1,5 +1,5 @@
 """Pick the menu / short-label rows of the sheet (the rows translated into Arabic; dialogue and long help texts
-are left to the user). usage: python pick_short.py <sheet.tsv> <out.json> [maxlen=24]
+are left to me). usage: python pick_short.py <sheet.tsv> <out.json> [maxlen=24]
 
 A row is picked when: its id is not a dialogue id (fewer than 12 digits), it has one Japanese line, at most maxlen
 characters of Japanese (tags not counted), and it is not a developer dummy (ダミー / 削除予定 / 予備 / テスト) or only
@@ -9,7 +9,7 @@ import sys, json, csv, re, collections
 
 MAXLEN = int(sys.argv[3]) if len(sys.argv) > 3 else 24
 DUMMY = re.compile(r'ダミー|削除予定|予備|テスト|仮|dummy|test|placeholder|解説文|^//|【\d+】|^操作説明\d|^ガチャNPC', re.I)
-# groups of short spoken lines (left to the user with the dialogue) and the staff credits (names; later)
+# groups of short spoken lines (left to me with the dialogue) and the staff credits (names; later)
 SPOKEN = {260000, 530000, 620000, 730000}
 CREDITS = {750000}
 TAG = re.compile(r'\{[^}]*\}')

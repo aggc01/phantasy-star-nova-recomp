@@ -72,7 +72,7 @@ were taken:
 
 ## 60 fps (done 2026-11-19, game_dev.exe and game_host.exe)
 
-The user asked for 60. The engine is built for 60, and game time comes from measured vblanks, so nothing runs double
+I asked for 60. The engine is built for 60, and game time comes from measured vblanks, so nothing runs double
 speed. Research with each finding checked a second time: [60fps-sites.md](60fps-sites.md). Four changes:
 
 1. **The game's own target.** `psn_frame_rate`, a HOOKS entry at fn_81a7756c (packs/PCSG00351/hooks.c). Each frame,
@@ -110,8 +110,8 @@ eviction. With that fix, test67 ran title to arena with no crash.
 - Pictures correct (test67-last.png: HUD, damage number, quest text).
 
 Not measured: windowed play at the launcher's 2x render scale, where the GPU has 4x the pixels; and a full 60 fps
-route. The scripted inputs are keyed to frame numbers, so a 60 fps run needs inputs at twice the frame numbers. The
-user's `recomp/settings.ini` has `frame_rate = 60` (the old file is in `dev/psn-logs/settings.ini.before-60fps`); test
+route. The scripted inputs are keyed to frame numbers, so a 60 fps run needs inputs at twice the frame numbers. My
+`recomp/settings.ini` has `frame_rate = 60` (the old file is in `dev/psn-logs/settings.ini.before-60fps`); test
 runs never read it.
 
 The movies also spend about 8 ms a frame decoding each video frame on the CPU (`gpu uploads: decode`). That's a second,
@@ -119,7 +119,7 @@ smaller item.
 
 ## Windowed crash and the startup freeze (2026-11-19 early morning)
 
-The user's first windowed play of the 01:51 build crashed on the title right after Start skipped the third movie:
+My first windowed play of the 01:51 build crashed on the title right after Start skipped the third movie:
 `SDL_CreateGPUTexture failed: vkQueueSubmit VK_ERROR_DEVICE_LOST`, then an access violation in `batch_flush`. Their log
 is kept in `dev/psn-logs/user-crash-2026-11-19-0327.log`. Headless tests (test68: 60 fps, render scale 2, the same route)
 never showed it.
@@ -145,7 +145,7 @@ device. The swizzled views made the bloom chain's targets views, so it happened 
 a draw. test76 x4 (two runs past the Start press, to frame 3900) and test78/test79 (the rebuilt game_host.exe, to frame
 4800): no crash.
 
-**The startup freeze.** The user saw a black screen for 16-17 s before the first warning screen. Every windowed run had
+**The startup freeze.** I saw a black screen for 16-17 s before the first warning screen. Every windowed run had
 it, about ten frames of 1.3-4.8 s each before frame 25, while the renderer drew about 1 ms a frame. In a window, the
 recipes' warm-up runs a *predicted pipelines* pass (NVIDIA + Vulkan only, `pipe_predict_on`): 192 pipelines for
 fragment programs not yet drawn, "18.1 s". The game stands still until it ends, on every launch, warm cache or not
@@ -165,7 +165,7 @@ waits came back 2-16 ms late before, none after.
 
 ## The texture crash 20 minutes in (2026-11-19 05:18)
 
-The user's play of the 03:55 game_host.exe crashed in a Filldia cutscene at frame ~71,900 (60 fps, about 21 minutes):
+My play of the 03:55 game_host.exe crashed in a Filldia cutscene at frame ~71,900 (60 fps, about 21 minutes):
 an access violation at 0x4c inside `SDL_UploadToGPUTexture`, called from `upload_texture`'s BC path
 (`upload_texture_bc`, inlined), from `bind_unit`. The log is in `dev/psn-logs/user-crash-2026-11-19-0518.log`. No
 earlier run had played this far.

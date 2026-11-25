@@ -5,7 +5,7 @@ folder). Change a file or size there, then rebuild the part it belongs to.
 
 | Entry | Used for | Now | Rebuild |
 |---|---|---|---|
-| `game_english` | English letters in every in-game message (menus, dialogue boxes, help, tutorials), drawn as glyph pictures into each message file instead of the game's own fixed-width letters; characters the font lacks keep the game's letter; `null` = the game's own font | `Glenth/glenthregular.ttf` 18 px, baseline row 16 (the user's font, 2026-11-19) | text archives (below) |
+| `game_english` | English letters in every in-game message (menus, dialogue boxes, help, tutorials), drawn as glyph pictures into each message file instead of the game's own fixed-width letters; characters the font lacks keep the game's letter; `null` = the game's own font | `Glenth/glenthregular.ttf` 18 px, baseline row 16 (my font, 2026-11-19) | text archives (below) |
 | `game_arabic` | Arabic in every in-game message (phrase pictures) | Segoe UI Bold 16 px, baseline 16 (`tools/fonts/segoeuib.ttf`) | text archives |
 | `subs_english` / `subs_arabic` | burned-in movie subtitles | Glenth 28 px / Segoe UI Bold 24 px | `bash dev/psnova/run_burn_subs.sh` (LANGS=en or ar for one) |
 | `warning_english` / `warning_arabic` | the boot notice (Attention.mp4) | Glenth / Segoe UI | `python dev/psnova/redraw_attention.py en|ar`, then run_burn_subs.sh (it packs the movie archive) |

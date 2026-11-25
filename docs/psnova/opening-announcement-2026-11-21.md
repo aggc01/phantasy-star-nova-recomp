@@ -1,6 +1,6 @@
 # Opening preview subtitles
 
-English wording supplied by the user, including "Planet Wakua."
+English wording by me, including "Planet Wakua."
 
 `OpeningDemo.mp4` plays after the warning and logos, before the title screen. The earlier music-only assessment in `text-render-faults.md` missed the Japanese radio announcement. Local transcription located the opening call at about 12.75 seconds and the end of the descent order at about 24.08 seconds.
 

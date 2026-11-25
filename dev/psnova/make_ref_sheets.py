@@ -1,6 +1,6 @@
 """make_ref_sheets.py <frames dir> <out dir> [--per 16] [--cols 4] [--width 400]
 
-Contact sheets of reference footage extracted one frame a second (files named frame_<n>_<hh-mm-ss>.jpg, as the user's
+Contact sheets of reference footage extracted one frame a second (files named frame_<n>_<hh-mm-ss>.jpg, as my
 "C:\\New PATH\\screenshots" folders are): <per> consecutive frames a sheet, each labelled with its time, written as
 sheet_<first second>.jpg plus sheets.txt ("<sheet file> <first time> <last time>"). The sheets are what a reviewer
 (or a cheap subagent) reads to index the footage; they stay in dump/ (git-ignored): they are someone else's video.

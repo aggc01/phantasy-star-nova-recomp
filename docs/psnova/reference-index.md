@@ -1,7 +1,7 @@
 # Phantasy Star Nova: real-Vita reference index
 
-Two YouTube walkthroughs of the real game (Japanese release, no English patch), one frame a second, given by the
-user on 2026-11-18 (`C:\New PATH\screenshots`). Contact sheets of 16 seconds each in `dump/reference/part1|part2/`
+Two YouTube walkthroughs of the real game (Japanese release, no English patch), one frame a second, that I gave
+on 2026-11-18 (`C:\New PATH\screenshots`). Contact sheets of 16 seconds each in `dump/reference/part1|part2/`
 (git-ignored). Rows written from the sheets (`dev/psnova/make_ref_sheets.py`, workflow
 `psnova-reference-index`, merged by `dev/psnova/merge_ref_index.py`); spot-check against the sheets before
 relying on a row.

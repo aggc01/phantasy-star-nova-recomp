@@ -27,8 +27,8 @@ for p in (1, 2):
             missing.append(f"part{p}/{line.split()[0]}")
 esc = lambda s: (s or "").replace("|", "/").replace("\n", " ")
 out = ["# Phantasy Star Nova: real-Vita reference index", "",
-       "Two YouTube walkthroughs of the real game (Japanese release, no English patch), one frame a second, given by the",
-       r"user on 2026-11-18 (`C:\New PATH\screenshots`). Contact sheets of 16 seconds each in `dump/reference/part1|part2/`",
+       "Two YouTube walkthroughs of the real game (Japanese release, no English patch), one frame a second, that I gave",
+       r"on 2026-11-18 (`C:\New PATH\screenshots`). Contact sheets of 16 seconds each in `dump/reference/part1|part2/`",
        "(git-ignored). Rows written from the sheets (`dev/psnova/make_ref_sheets.py`, workflow",
        "`psnova-reference-index`, merged by `dev/psnova/merge_ref_index.py`); spot-check against the sheets before",
        "relying on a row.", ""]

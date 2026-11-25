@@ -1,6 +1,6 @@
 # Movie cleaning v3: per-line masks (2026-11-19)
 
-The user reported, while playtesting the v2 movies: "the Japanese subtitles are showing for a split second before
+I reported, while playtesting the v2 movies: "the Japanese subtitles are showing for a split second before
 fading out". This is flaw 1 of v2 (localization-notes.md, "Movies v2 installed and tested in the game"). v3 fixes it.
 The 8 story movies are cleaned again into `dump/psnova-l10n/movies_clean_jp_v3/`. **The archive is NOT built or
 installed.** The main session does that.
@@ -67,7 +67,7 @@ shares high, so it does not count. For each counted frame:
   of ring white in the cleaned frame) x |T|;
 - the frame is flagged when residue > max(40, 4 % of |T|).
 
-Flagged frames are split into **edge** (outside the core: the fade and change frames the user saw) and **core**.
+Flagged frames are split into **edge** (outside the core: the fade and change frames I saw) and **core**.
 "English-confirmed" lines are lines where the fan copy shows an English line in at least 30 % of the core frames. The
 other lines are mostly false lines (background) and a few untranslated ones. The check also reruns v2's own detector on
 the cleaned movie.
@@ -91,7 +91,7 @@ same-frame ring fixed this.
 | MP09_040_070 | 14 (14) | 54 | 2 | 0 | 0 | 0 | 0 |
 | **total** | 163 (141) | **566** | **125** | **191** | **2** | **0** | **19** |
 
-- v2's edge residue is the user's flash: about 2 frames at each end of almost every line. The core residue is mostly
+- v2's edge residue is my flash: about 2 frames at each end of almost every line. The core residue is mostly
   the first frame of a line that starts right after another one.
 - The 21 v3 frames were looked at, and none holds text. They are all MP09_040_040 golden-glow scenes:
   - 1762-1763: "お前ってヤツは……" is removed; the bright gold background counts;
@@ -115,7 +115,7 @@ same-frame ring fixed this.
    - The background cut removed 15 % of that movie's line-mask pixels, but the masked area per frame fell by less than
      1 %.
    - Better quality needs motion-compensated fill (global shift or optical flow) or a video-inpainting model
-     (ProPainter / E2FGVI). A model needs a download, which is the user's decision.
+     (ProPainter / E2FGVI). A model needs a download, which is my decision.
 2. **False lines are smeared a little more than in v2.** In MP09_040_040's golden-glow scene (frames 1807-1873, no
    text), false lines now get their full line mask plus 8-frame margins. This leaves blotches on the character's legs,
    for example at frames 1871-1873. v2 smeared these frames too, but less.

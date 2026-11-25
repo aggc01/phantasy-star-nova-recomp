@@ -1,6 +1,6 @@
-# English text faults seen in the user's recordings (2026-11-19 evening)
+# English text faults seen in my recordings (2026-11-19 evening)
 
-Found by the recomp session while reviewing the user's nine recordings (`dump/user-videos-2026-11-19/`, review in
+Found by the recomp session while reviewing my nine recordings (`dump/user-videos-2026-11-19/`, review in
 `review.txt` there; tools `dev/psnova/video_review.sh`, workflow psnova-video-review, 68 review tasks, each fault re-checked
 on full frames). This is a report for the localization session: its tools were read, not changed.
 
@@ -36,7 +36,7 @@ than the picture picks up the neighbour's edge (the streaks). Cause of the offse
 
 - A missing-glyph box between "PlayStation" and "Vita" (recording 9 at 0:56): the ® / ™ sign is not in Glenth, and is
   not in the fallback list ("[]~<>").
-- Chapter card "The Battle for Survival Begins" (user's screenshot): the blurred Japanese title glow still shows above the
+- Chapter card "The Battle for Survival Begins" (my screenshot): the blurred Japanese title glow still shows above the
   English line (the glow layer is a separate sprite or texture from the word pieces made transparent).
 - Area banner ("Steel Wastelands 1 / Area 1") drawn over a dialogue box and a name tag (recording 6 at 2:54-2:56): may
   be the original game's layering; not checked against the Japanese.
@@ -77,13 +77,13 @@ The recomp side could instead patch the game's shadow offset to use the glyph he
 the glyph quad builder), which fixes the shadows of wide pictures but not the subtitle squeeze; the piece change covers
 both, so it is the one recommended. Not done yet: the localization session owns the encoder.
 
-## 6. The opening movie has no subtitles (user, 2026-11-19 evening)
+## 6. The opening movie has no subtitles (me, 2026-11-19 evening)
 
-Update, 2026-11-21. A Japanese radio announcement was found around 00:12.75–00:24.08 and the user's English subtitles were installed. See [Opening preview subtitles](opening-announcement-2026-11-21.md).
+Update, 2026-11-21. A Japanese radio announcement was found around 00:12.75–00:24.08 and my English subtitles were installed. See [Opening preview subtitles](opening-announcement-2026-11-21.md).
 
 `OpeningDemo.mp4` (2:20, plays after the logos, before the title) is byte-identical in lang/en and app0: the localization
-left it out on purpose (localization-notes.md: "in-universe decorative script ... no Japanese subtitle line ... ask the
-user"). Checked: no spoken narration (music only, spectrogram `dump/user-videos-2026-11-19/opening/spectrum.png`); the
+left it out on purpose (localization-notes.md: "in-universe decorative script ... no Japanese subtitle line ... ask
+me"). Checked: no spoken narration (music only, spectrogram `dump/user-videos-2026-11-19/opening/spectrum.png`); the
 on-screen lines (from 0:10, e.g. the "Deka Valiant" line at 0:15, lines at 0:35, 0:40, 0:50, 1:05) are written in the
 game's own fictional alphabet. Subtitles would mean reading those lines (the series' alphabet is probably a
 letter-for-letter cipher of the Latin alphabet; not checked) and burning an English/Arabic line under each.

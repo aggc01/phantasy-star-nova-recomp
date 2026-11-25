@@ -1,6 +1,6 @@
 # Save backups in the F10 menu (2026-11-19)
 
-The user asked for save states in the menu, "so that we move to a place easier".
+I asked for save states in the menu, "so that we move to a place easier".
 
 ## Why not save states
 

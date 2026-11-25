@@ -17,7 +17,7 @@ Each change keeps a switch to turn it off and a backup of the previous exe in th
 | Launcher log pump decodes UTF-8 incrementally | pipeline/vitarecomp.py `tee_run` | none (old script: `vitarecomp.py.before-tee-fix`) | half a Japanese character in a chunk made Python's console writer spin forever; the game blocked in fprintf (freeze at the load-game list) |
 | Depth clip switch | gfx_gpu.c `pipe_create_info` | `RECOMP_GPU_DEPTH_CLIP=1`, OFF by default, not in RUN_ENV | tried for the Fildia fault below; changed nothing |
 
-## Open faults (user screenshots and F12 captures, evening of 2026-11-20)
+## Open faults (my screenshots and F12 captures, evening of 2026-11-20)
 
 Captures: `dump/decrypted/PCSG00351/recomp/captures/frame_*.vfc`; work files: `dump/user-captures-2026-11-20e/`.
 Replay: `build/gfxreplay-gpulines.exe <vfc> out.ppm` with `RECOMP_GFX=gpu RECOMP_SRGB=1`, and
@@ -30,20 +30,20 @@ sheets in `dump/reference/part1|part2/`, index in `reference-index.md`.
    - Fildia "I have a request" (frame_74253; Vita part2 13:17/13:22): correct after draw 1045, then the ground
      (draw 1046, v 0x1110a2a0 f 0x1116f8b0, GREATER_EQUAL no write, cull none, default uniforms in GAME memory
      0x237eda20/0x237edb90 double-buffered) covers the screen. Reversed depth (0.5 + 0.5 * ~30 / w); the ground's vertices
-     land at w ~ 100-160 (some behind the camera), the characters much further. Still wrong at 30 fps (user, 2026-11-20).
+     land at w ~ 100-160 (some behind the camera), the characters much further. Still wrong at 30 fps (me, 2026-11-20).
    - Bridge, Kisara "Report from the engine room ... down to 20%" (frame_49261/25983; Vita part1 18:45): the bridge
      draws (consoles visible at draw 30), then big stage meshes (draws 34-35, v 0x11112fd0 f 0x11122ec0, depth 6/1,
      shared user uniform buffer 0 = 0x23ab4a90 in game memory) cover it; the final picture is grey with a teal floor.
    - Common: stage geometry whose transforms come from game-memory uniform buffers ends up in front of the camera.
      Candidates: the stage's transform data is wrong when the draws run (timing of when the game writes it vs. when we
      read it), or game code computes it wrong. A/B test tried: `dev/psn-logs/run_bridge_ab.sh` (slot 2 of a COPY of the
-     user's saves, RECOMP_DEFER_DRAWS 1 vs 0, shots every 100 frames to `dump/user-captures-2026-11-20e/bridge/d1|d0`). Inconclusive: slot 2 starts at the dream
+     my saves, RECOMP_DEFER_DRAWS 1 vs 0, shots every 100 frames to `dump/user-captures-2026-11-20e/bridge/d1|d0`). Inconclusive: slot 2 starts at the dream
      sequence ("And then...") and the bridge needs the player to walk there; scripted inputs stop in the corridor. Both runs
-     drew the dream and the corridor correctly. Next: the user plays to the bridge with RECOMP_DEFER_DRAWS=0, or a
+     drew the dream and the corridor correctly. Next: I play to the bridge with RECOMP_DEFER_DRAWS=0, or a
      movement script is written, or an F12 capture is made with draws at the call (defer 0) to compare stage matrices.
 2. **White haze on the captain shot** (frame_74696): the cutscene composite (fprog 0x11109e00: main image + 120x68 blur
    through csmMat3x4) gets a colour matrix with +0.42 on every channel: the game is mid fade-to-white. Gone at 30 fps in
-   the user's run, so a 60 fps timing issue. Suspect from 60fps-sites.md: fn 0x8186ec1c / 0x81fcc168 compute a fade step
+   my run, so a 60 fps timing issue. Suspect from 60fps-sites.md: fn 0x8186ec1c / 0x81fcc168 compute a fade step
    of 1/30 per frame. Not fixed.
 3. **"Ghost" halo around characters:** the real Vita has the same soft glow outline (part2 frame 13:22, pale band beside
    Fildia's hair), so it is the game's own effect; 4x makes it more visible. Not a bug; a later option could soften it.
@@ -53,12 +53,12 @@ sheets in `dump/reference/part1|part2/`, index in `reference-index.md`.
 
 ## Rules this session followed
 
-Game imagery stays out of git; nothing committed; user saves backed up before test runs
+Game imagery stays out of git; nothing committed; my saves backed up before test runs
 (`dump/save-backups/`), tests start from copies (`TEST_SAVES`); the l10n session's files are not edited.
 
 ## Update, late 2026-11-20
 
-- **User test: bridge shot still grey with RECOMP_DEFER_DRAWS=0** (and the Fildia shot was broken at 30 fps). So neither
+- **My test: bridge shot still grey with RECOMP_DEFER_DRAWS=0** (and the Fildia shot was broken at 30 fps). So neither
   the draw holding nor the frame rate causes "scenery over characters". The renderer draws what the game gives it
   (software = GPU).
 - The one untranslated program in that session (0x110ff3c0, "SMP: texture unit -1 has no sampler slot", software path) is
@@ -81,7 +81,7 @@ Game imagery stays out of git; nothing committed; user saves backed up before te
 - `dev/psn-logs/run_fade_ab.sh` (slot 2 of a save COPY, 60 vs 30 fps) did not reach the captain scene: the dream sequence
   uses the gameplay composite, without a colour-matrix fade. Inconclusive.
 - Re-read of the evidence: on the real Vita the captain shot (part2 13:29-13:38) cuts to a very bright sky shot (13:39);
-  frame_74696's +0.42 offset may be that transition caught mid-way, not a wrong fade. The user's 30 fps run simply may not
+  frame_74696's +0.42 offset may be that transition caught mid-way, not a wrong fade. My 30 fps run simply may not
   have caught the moment. The 1/30 step at 0x8186ee46 belongs to PileFadeOut (a UI/pile fade-out), not obviously the
   cutscene's. NOT changed: no evidence a fix is needed. To settle: at 60 fps, does the captain shot stay white for long,
   or only flash white just before the cut to the sky?

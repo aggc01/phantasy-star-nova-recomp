@@ -1,6 +1,6 @@
 """Character names for the HUD, the head labels and the portrait message window (2026-11-19).
 
-The user saw ルティナ / フィルディア in Japanese over characters, in the party HUD and in the portrait message window with
+I saw ルティナ / フィルディア in Japanese over characters, in the party HUD and in the portrait message window with
 English selected. Those names are not messages: they are Shift-JIS strings in two tables of Sega's update archive that
 the game turns into BasicCharSet glyphs (fn_8157e7d0: Shift-JIS -> UTF-16; the font has ASCII, kana and full-width
 letters, no Arabic -- docs/psnova/ui-strings-research.md):

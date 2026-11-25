@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepare the user's screen recordings for review without watching them in real time:
+# Prepare my screen recordings for review without watching them in real time:
 #   contact sheets (one frame every 2 s, 4x4 per sheet = 32 s), a sound spectrogram, and the sound as a WAV
 #   for dev/psnova/audio_faults.py.
 # usage: dev/psnova/video_review.sh <out dir> <video>...

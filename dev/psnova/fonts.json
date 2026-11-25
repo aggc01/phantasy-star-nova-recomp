@@ -6,6 +6,6 @@
   "subs_arabic":  {"file": "tools/fonts/segoeuib.ttf",    "size": 24},
   "warning_english": {"file": "Glenth/glenthregular.ttf", "note": "the boot notice (Attention.mp4) redraw"},
   "warning_arabic":  {"file": "tools/fonts/segoeui.ttf"},
-  "ui_english": {"file": "Glenth/glenthregular.ttf", "note": "labels redrawn into UI textures (.aif): menu banners, button guide, chapter cards, tutorial pictures (user: Glenth, 2026-11-19)"},
+  "ui_english": {"file": "Glenth/glenthregular.ttf", "note": "labels redrawn into UI textures (.aif): menu banners, button guide, chapter cards, tutorial pictures (my choice: Glenth, 2026-11-19)"},
   "ui_arabic":  {"file": "tools/fonts/segoeuib.ttf"}
 }

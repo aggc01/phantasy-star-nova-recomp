@@ -124,7 +124,7 @@ Limits and notes:
    (texture, cell rectangle, English, Arabic, style), so both languages build from one sheet like the messages.
 2. Add the step to `build_l10n.py` (or a sibling) so the overlay build writes the textures next to the messages
    before `cpk_build.py` runs; check by decoding the built archive's textures back to PNG.
-3. One in-game check on the character creation screen and a menu banner (needs the machine free and the user's go).
+3. One in-game check on the character creation screen and a menu banner (needs the machine free and my go).
 4. **Tutorials (83 pictures) later and separately:** most are screenshots of Japanese menus. Retaking them from our
    English/Arabic build gives the cleanest result (same 512x256 framing); red callout labels alone could be painted
    over. Decide after step 3.

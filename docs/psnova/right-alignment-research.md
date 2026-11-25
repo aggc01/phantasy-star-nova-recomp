@@ -1,7 +1,7 @@
 # Right-aligned Arabic: how the game places text, and the best way to right-align it (research, 2026-11-19)
 
 Read-only reverse engineering of the 1.05 program (`dump/decrypted/PCSG00351/recomp/game_part*.c`, one C function per guest
-address, the ARM instruction as a comment on every line) plus the game data. No game was run (the user was play-testing).
+address, the ARM instruction as a comment on every line) plus the game data. No game was run (I was play-testing).
 Work scripts were in the session scratchpad only; nothing in the build, the pack or the tools was changed.
 
 ## Summary
@@ -193,7 +193,7 @@ Variant (b'), quickest to try: hook B alone with a setting (e.g. an env/ini swit
 align-0 box in the Arabic build. No encoder change; but Latin-only and number labels that were designed left-aligned
 would move too.
 
-What a first test should check (one run, after the user's play test): the class-select menu rows, a help line
+What a first test should check (one run, after my play test): the class-select menu rows, a help line
 (170111), the name dialog (500111, must stay centred), the speaker label and a 3-line dialogue (each line flush right).
 Risks only a run shows: a box whose width is larger than its visible frame (text would sit at the far right of the
 box, not of the frame); text drawn by another class than this TextBox (would stay left).

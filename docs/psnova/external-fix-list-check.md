@@ -1,6 +1,6 @@
 # Another port's fix list, checked against ours (2026-11-19 evening)
 
-The user pasted a fix list from another Phantasy Star Nova port on Project Nativ (commits d21405d, 6897b42, d2a85c5,
+I pasted a fix list from another Phantasy Star Nova port on Project Nativ (commits d21405d, 6897b42, d2a85c5,
 4ee0cb3, 92fcebb: in none of our checkouts). Workflow psnova-external-fixes-check: one checker per item reading our code,
 logs and game data (read-only), and a second checker trying to refute every claimed gap or conflict. Raw results:
 the workflow transcript (wf_ed9ea690-864).
@@ -69,7 +69,7 @@ bloom on top would darken mid-tones by roughly 30-35/255. At most an opt-in "Mod
 - README.md:57-59's reason for the two mid-instruction entries is wrong (they come from bl encodings read from the
   middle of real bl instructions, not data words).
 
-## Taken (2026-11-19 evening, user: "Yes, all three")
+## Taken (2026-11-19 evening, me: "Yes, all three")
 
 1. **Header bounds** (runtime/gfx/usse.c: h_table_count / h_table_count_at, used by find_container, parse_vertex_layout,
    literals_load, usse_setup_registers, usse_param_resource; usse_gxp_sane rejects blobs whose tables don't fit).

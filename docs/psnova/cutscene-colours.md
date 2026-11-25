@@ -1,6 +1,6 @@
 # Washed-out cutscenes and magenta glow (2026-11-19)
 
-The user played to the Filldia landing and saw two things: cutscene characters looking pale and white, and saturated
+I played to the Filldia landing and saw two things: cutscene characters looking pale and white, and saturated
 magenta streaks in the sky. Their reference frames from a real Vita playthrough (one frame a second, outside the repo:
 `C:\New PATH\screenshots\`, part 1 = character creation + intro, part 2 = mission 1) show the same shots in normal colour.
 
@@ -60,11 +60,11 @@ A capture can't test this: it records texture formats with the gamma bits alread
 
 ## The dark band (still open)
 
-The user's 04:21 screen recording (Steel Wastelands, 60 fps) shows it clearly: a long, straight, bluish shadow from the
+My 04:21 screen recording (Steel Wastelands, 60 fps) shows it clearly: a long, straight, bluish shadow from the
 character's feet. The arena's directional light is low (direction y = -0.28, about 16 degrees above the horizon, from the
 captured `cvDirContext`), which makes a shadow about 3.5 times the character's height. So it may be the game's own shadow.
 The reference arena frames don't show a clear long band, but the video quality is low. Headless scripted runs (30 and 60
-fps, steady or loaded) never showed it. Next: an F12 capture from the user while it shows, then compare its shadow-map
+fps, steady or loaded) never showed it. Next: an F12 capture from me while it shows, then compare its shadow-map
 draws with the same frame on the software renderer.
 
 ## Tools built for this (Windows, in build/, from runtime/debug)
