@@ -1,4 +1,4 @@
-/* Done by Codex. Native entry point for Phantasy Star Nova Recomp setup.
+/* Native entry point for Phantasy Star Nova Recomp setup.
  *
  * No arguments: the setup window (pythonw). Arguments: a console run for scripts (python). The exception is --export-report when
  * nothing in front of it is a console (the game launcher's "Create a support report" button): that runs without a console window

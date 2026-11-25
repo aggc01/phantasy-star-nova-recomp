@@ -26,7 +26,7 @@ MP06_030_070 470 497
 MP09_040_040 464 491
 MP09_040_070 470 497
 EOF
-  # Done by Codex. The English archive also includes the opening announcement.
+  # The English archive also includes the opening announcement.
   if [ "$lang" = en ]; then
     opening_source="$D/movie_cpk_en/source"
     $PY -s -B pipeline/cri/cpk.py extract "$BASE" "$opening_source" --match OpeningDemo.mp4 || exit 1

@@ -1,6 +1,5 @@
 # Nova 2× English text pilot, 2026-11-22
 
-Done by Codex.
 
 `build_l10n.py` accepts `--english-atlas-scale 2` for English. It rasterizes complete font runs at double the selected FreeType size and fits them into the original logical geometry. The RMD writer scales the texture payload and its GXM size fields. The RMD header's dimensions at `0x70/0x74` remain at 1× because Nova uses them in its glyph layout. Text codes, glyph advances, texture IDs, box coordinates, and normalized glyph UVs are preserved. The decoder uses the GXM dimensions for the physical bitmap and exposes them separately from the logical size. Captions retain 21-pixel logical cells with 42-pixel physical bitmaps. Original bitmap glyphs in an English atlas retain their source shapes. The default build remains 1×.
 
@@ -37,7 +36,7 @@ The first atlas variant doubled the RMD layout dimensions and the GXM dimensions
 
 ## Live frame-time comparison
 
-Both builds loaded English slot 1 at the outdoor Delta Valiant Exploration Base. The test used the same scripted controller camera rotation, 4× render scale, 60 FPS target and real game clock. Three 60-second windows per archive began at frame 3600. The first run of each archive captured frame 3500 during warm-up. Screenshot capture was inactive in every timed window. After fixing the logical dimensions, Codex ran three new pilot samples and compared them with the original baseline.
+Both builds loaded English slot 1 at the outdoor Delta Valiant Exploration Base. The test used the same scripted controller camera rotation, 4× render scale, 60 FPS target and real game clock. Three 60-second windows per archive began at frame 3600. The first run of each archive captured frame 3500 during warm-up. Screenshot capture was inactive in every timed window. After the logical dimensions were fixed, three new pilot samples were run and compared with the original baseline.
 
 | Measure | Baseline | Pilot |
 | --- | --- | --- |

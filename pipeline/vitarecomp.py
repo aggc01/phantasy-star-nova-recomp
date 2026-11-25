@@ -264,7 +264,7 @@ def cmd_add(T, rest):
         kept = k.stdout.strip() if k.returncode == 0 else ""
         if kept: args += ["--license", kept]; say(f"{tid}: its licence, kept ({cid})")
         elif kind == "update" and os.path.isfile(os.path.join(W, "license.rif")): args += ["--license", os.path.join(W, "license.rif")]
-        # Done by Codex. A plain update with its own ELF does not need the base game's licence.
+        # A plain update with its own ELF does not need the base game's licence.
         elif kind == "update" and (not os.path.isdir(T) or os.path.isfile(os.path.join(T, "sce_pfs", "files.db"))):
             die(f"{tid}: this encrypted update needs the base game's licence (work.bin or .rif)")
         elif kind == "update":
@@ -278,7 +278,7 @@ def cmd_add(T, rest):
         try: tid = json.load(open(os.path.join(tmp, "game.json")))["title_id"]
         except (OSError, ValueError, KeyError): tid = "-"
         W = os.path.join(DUMP, "decrypted", tid)
-    # Done by Codex. Native ELF dumps sometimes retain the eboot.bin filename.
+    # Native ELF dumps sometimes retain the eboot.bin filename.
     raw_eboot, converted_eboot = (os.path.join(tmp, filename) for filename in ("eboot.bin", "eboot.bin.elf"))
     if not os.path.isfile(converted_eboot) and os.path.isfile(raw_eboot):
         with open(raw_eboot, "rb") as f:
@@ -455,7 +455,7 @@ def cmd_import(g, src):
             if info.returncode: sys.stderr.write(info.stderr); sys.exit(info.returncode)
             pv = (info.stdout.split() + ["", "", ""])[2]
             if not g.VERSIONS or version_of(g.VERSIONS, sha256(e)):
-                # Done by Codex. Layer the original and update straight into the portable game filesystem.
+                # Layer the original and update straight into the portable game filesystem.
                 # On Windows an absolute directory junction would break when the release folder moves.
                 src = os.path.join(OUT, "fs", "app0")
                 run([PY, os.path.join(R, "packs.py"), "layer", os.path.join(W, "app0"), os.path.join(W, "patch0"), src], env=env_with(TOOLS_ENV))
@@ -713,7 +713,7 @@ def cmd_run(g, frames):
         if os.path.isfile(os.path.join(OUT, "session.log")): os.replace(os.path.join(OUT, "session.log"), os.path.join(OUT, "session.prev.log"))
         e = game_env(g, g.RUN_ENV.split() + (ENV.get("EXTRA_ENV") or "").split(), fixed)
         if g.TITLE_ID == "PCSG00351":
-            # Done by Codex. Sample Nova's GPU queue and thread waits during normal play.
+            # Sample Nova's GPU queue and thread waits during normal play.
             e.setdefault("RECOMP_GPU_FENCE_STATS", "1")
             e.setdefault("RECOMP_WAIT_STATS", "120")
             e.setdefault("RECOMP_METRICS", "1")

@@ -2,7 +2,7 @@
 
 The user pasted a fix list from another Phantasy Star Nova port on Project Nativ (commits d21405d, 6897b42, d2a85c5,
 4ee0cb3, 92fcebb: in none of our checkouts). Workflow psnova-external-fixes-check: one checker per item reading our code,
-logs and game data (read-only), and a second agent trying to refute every claimed gap or conflict. Raw results:
+logs and game data (read-only), and a second checker trying to refute every claimed gap or conflict. Raw results:
 the workflow transcript (wf_ed9ea690-864).
 
 **Their addresses are the 1.00 eboot's.** 0x81dd110c, 0x81a028a8 and 0x82256c1c are function starts in app0/eboot.bin.elf
@@ -91,7 +91,7 @@ bloom on top would darken mid-tones by roughly 30-35/255. At most an opt-in "Mod
    seeded ARM switch heads (each referenced only by its switch's table at 0x81a687c0 / 0x81a68904; the recompiled table
    jump goes to them as labels: `JUMP(t)`), and 0x81e53e76, now the second instruction of 0x81e53e70 (nothing refers to
    it). ARM functions 446 = the analysis' 446 (was 462 against 461: the misdecoded one is gone); fn_8213e768 decodes as
-   Thumb (`push.w {r4-r11, lr}`). check_labels: 115 files, 0 missing. Review (Sonnet): one over-read in the new sane check
+   Thumb (`push.w {r4-r11, lr}`). check_labels: 115 files, 0 missing. Review: one over-read in the new sane check
    for 128-151-byte blobs, fixed (fields beyond the blob are skipped), plus usse_param_resource and junk-ARM blx sources.
    The junk refinement in recomp.py came after this recompile; it changes nothing here (no junk-ARM function adds a blx
    target: the ARM count equals the analysis').

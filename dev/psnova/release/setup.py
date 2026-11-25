@@ -1,4 +1,4 @@
-"""Windows release installer for Phantasy Star Nova Recomp. Done by Codex.
+"""Windows release installer for Phantasy Star Nova Recomp.
 
 Support reports, in-place updates, build generations and rollback were added in setup_reports.py, setup_updates.py and
 setup_generations.py, and in the parts of this file that use them.

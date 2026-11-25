@@ -50,7 +50,7 @@ def is_arabic(ch):
 
 
 class Encoder:
-    # Done by Codex. Keep the original layout metrics for scaled English atlases.
+    # Keep the original layout metrics for scaled English atlases.
     def __init__(self, text_dir, map_dir, english_atlas_scale=1):
         if english_atlas_scale not in (1, 2) or (english_atlas_scale == 2 and not LATIN):
             raise ValueError('English atlas scale must be 1, or 2 with an English font configured')
@@ -78,7 +78,7 @@ class Encoder:
                 self.latin = ImageFont.truetype(os.path.join(_ROOT, LATIN['file']), LATIN.get('size', 18), layout_engine=ImageFont.LAYOUT_BASIC)
             self.latin_base = LATIN.get('baseline', 16)
 
-    # Done by Codex: use the same runs for width measurement and rendering.
+    # Use the same runs for width measurement and rendering.
     def _latin_runs(self, items):
         fallback = set((LATIN or {}).get('fallback', ''))
         run = []
@@ -101,7 +101,7 @@ class Encoder:
         return [('pic', 'R:' + x[1], self.latin_run(x[1])) if x[0] == 'latin' else x
                 for x in self._latin_runs(items)]
 
-    # Done by Codex: cache font work during line planning.
+    # Cache font work during line planning.
     @lru_cache(maxsize=1024)
     def _latin_available(self, ch):
         return ch == ' ' or bool(self.latin.getmask(ch).getbbox())
@@ -126,7 +126,7 @@ class Encoder:
             return glyph
         return (*glyph, self._scaled_latin_run(s, W))
 
-    # Done by Codex. Draw the full run before slicing to preserve kerning
+    # Draw the full run before slicing to preserve kerning
     # and keep letter fragments aligned across cell boundaries.
     @lru_cache(maxsize=32)
     def _scaled_latin_font(self, size):
@@ -308,10 +308,10 @@ class Encoder:
             out = [x for x in out if x[0] not in ('ruby', 'rend')]
         return out
 
-    # Done by Codex: uniformly reduce the font only when a message cannot
+    # Uniformly reduce the font only when a message cannot
     # fit at the configured size, then restore it for the next message.
     def encode(self, msg_id, text, lang='en', template=None, arabic_mode='word', rtl=None, context=None):
-        # Done by Codex. Measure, reflow and rasterize with the same font instance.
+        # Measure, reflow and rasterize with the same font instance.
         items = self.parse(text, lang)
         original = self.latin
         try:

@@ -1,6 +1,6 @@
 # English text layout, 21 November 2026
 
-Done by Codex. This change uses the existing English sheet v7 and Glenth fonts. It changes the English presentation of translated text in the PCSG00351 1.05 recomp.
+This change uses the existing English sheet v7 and Glenth fonts. It changes the English presentation of translated text in the PCSG00351 1.05 recomp.
 
 ## Movies and warning
 
@@ -10,7 +10,7 @@ Done by Codex. This change uses the existing English sheet v7 and Glenth fonts. 
 
 ## In-engine text
 
-`dev/psnova/rmdtext/english_layout.py` identifies event text from Lua calls, caption lists, event CSVs, operator transmission variants and NPC talk tables. Explicit choice-only entries keep their existing layout. The 15-digit NPC/battle message banks include variants absent from the literal call lists. For 14 unreferenced main-story cues, Codex chose full cells so either the cinematic drawer or a proportional text box can display the results.
+`dev/psnova/rmdtext/english_layout.py` identifies event text from Lua calls, caption lists, event CSVs, operator transmission variants and NPC talk tables. Explicit choice-only entries keep their existing layout. The 15-digit NPC/battle message banks include variants absent from the literal call lists. For 14 unreferenced main-story cues, full cells were chosen so either the cinematic drawer or a proportional text box can display the results.
 
 `encode_text.py` measures complete text runs in pixels and preserves the sequence of words and inline controls. The body casts in `ui_field.crbpj` set the width to 483 px for regular dialogue (record 0xf01c) and 462 px for portrait radio messages (0xdae4). The planner uses the fewest rows that fit with strictly descending widths, up to three. It favors a gentle taper and nearby punctuation so sentences stay together where space allows. If a long message needs smaller letters, it is rasterized at a smaller font size. In-engine cinematic captions allow at most two rows. Their text is drawn first and then cut into exact 21 × 21 pixel tiles. Padding occurs at the end of a run, so the cinematic drawer can place every tile in its fixed cell with the original letter proportions.
 

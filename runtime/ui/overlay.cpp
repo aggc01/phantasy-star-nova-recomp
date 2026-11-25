@@ -48,8 +48,8 @@
 #include "gpulock.h"   /* the SDL submit below is the locked one, and ImGui's own submits run under the same lock (render_frame): Homebrew SDL 3.4.16's Metal fence race, see that header */
 #include "overlay.h"
 #include "savedlg.h"
-#include "ime.h"          /* Done by Codex */
-#include "nova_save_display.h"   /* Done by Codex */
+#include "ime.h"
+#include "nova_save_display.h"
 #include "save_backups.h"   /* the Saves page's file work (save_backups.c) */
 #include "ui_theme.h"
 #define STBI_NO_STDIO
@@ -76,7 +76,7 @@ int window_get_fullscreen(void); void window_set_fullscreen(int on);
 int window_raw_look(void); void window_set_raw_look(int on);
 int window_controls_count(void);
 int window_gyro_present(void);
-int window_gamepad_connected(void);   /* Done by Codex */
+int window_gamepad_connected(void);
 void motion_recenter(void);
 void window_controls_row(int i, const char **action, const char **key, const char **pad);
 /* gfx_gpu.c: the GPU backend's internal resolution (1-gfx_gpu_render_scale_max) and F2's own cycle */
@@ -108,7 +108,7 @@ void settings_save(void);
 
 static ImGuiContext *g_ctx;
 static bool g_has_window;      /* overlay_init was given a real SDL_Window: the platform backend is live */
-static std::atomic<bool> g_ime_available;   /* Done by Codex: visible to the guest thread */
+static std::atomic<bool> g_ime_available;   /* visible to the guest thread */
 extern "C" int overlay_ime_available(void) { return g_ime_available; }
 static SDL_GPUDevice *g_save_gpu;
 static SDL_GPUTexture *g_save_icon;
@@ -117,7 +117,7 @@ static bool nova_title(void) {
 	return title && !std::strcmp(title, "PCSG00351");
 }
 
-/* Done by Codex. The firmware picker receives its own display copy of the slot. */
+/* The firmware picker receives its own display copy of the slot. */
 extern "C" void nova_save_translate_fields(char *subtitle, size_t subtitle_size,
                                            char *detail, size_t detail_size) {
 	if (!nova_title() || !nova_save_english()) return;
@@ -133,7 +133,7 @@ extern "C" void nova_save_translate_fields(char *subtitle, size_t subtitle_size,
 	}
 }
 
-/* Done by Codex. Nova's slot records reference the same app0 save icon. */
+/* Nova's slot records reference the same app0 save icon. */
 static SDL_GPUTexture *load_nova_save_icon(SDL_GPUDevice *device) {
 	const char *root = std::getenv("RECOMP_FS");
 	const std::string path = std::string(root ? root : "fs") + "/app0/saveicon.png";
@@ -651,7 +651,7 @@ static char g_bk_label[48];
 static int g_bk_ask = -1, g_bk_ask_op;         /* the backup a Restore (op 1) or Delete (op 2) waits to confirm */
 static void backups_rescan(void) { g_bk_have = save_backups_current(&g_bk_cur); g_nbk = save_backups_list(g_bk, BACKUP_MAX); }
 static void save_words(const SaveBackup &b) {   /* the game's own words for a save (its slot's subtitle and detail), and when it saved */
-	const bool en = nova_title() && nova_save_english();   /* Done by Codex */
+	const bool en = nova_title() && nova_save_english();
 	const auto subtitle = nova_save_subtitle(b.subtitle, en);
 	ImGui::TextUnformatted(!subtitle.empty() ? subtitle.c_str() : b.title[0] ? b.title : "(the game gave no description)");
 	char t[400]; t[0] = 0;
@@ -1108,7 +1108,7 @@ static const ImGuiKey K_BACK[] = {ImGuiKey_Escape, ImGuiKey_Backspace, ImGuiKey_
 template <size_t N> static bool keys_pressed(const ImGuiKey (&k)[N]) { for (ImGuiKey x : k) if (ImGui::IsKeyPressed(x, true)) return true; return false; }
 template <size_t N> static bool keys_down(const ImGuiKey (&k)[N]) { for (ImGuiKey x : k) if (ImGui::IsKeyDown(x)) return true; return false; }
 
-/* Done by Codex. The game keeps polling SceIme while this independent editor
+/* The game keeps polling SceIme while this independent editor
  * holds input. The window only submits an answer to the current guest request. */
 struct NameEditor {
 	unsigned seq = 0;
@@ -1273,7 +1273,7 @@ static void build_name_editor(float w, float h) {
 static void build_save_dialog(float w, float hgt) {
 	SaveDlgView v; const int kind = savedlg_view(&v);
 	if (kind == SAVEDLG_NONE) { savedlg_release(); g_sd_seq = -1; return; }
-	const bool nova = nova_title(), en = nova && nova_save_english();   /* Done by Codex */
+	const bool nova = nova_title(), en = nova && nova_save_english();
 	const bool mouse_keys = window_kbm_active() || !window_gamepad_connected();
 	if (v.seq != g_sd_seq) { g_sd_seq = v.seq; g_sd_sel = kind == SAVEDLG_LIST ? v.focus : 0; g_sd_armed = false; }
 	/* a key already down as the step appeared (the press that asked the game to save) answers nothing */

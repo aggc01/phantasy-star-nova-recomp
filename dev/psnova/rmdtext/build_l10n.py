@@ -13,8 +13,8 @@ import argparse, glob, io, json, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, '..'))
 from encode_text import Encoder
-from english_layout import message_contexts  # Done by Codex
-from center_dialogue_names import patch as center_dialogue_names  # Done by Codex
+from english_layout import message_contexts
+from center_dialogue_names import patch as center_dialogue_names
 from check_sheet import unesc
 import cpk_build
 
@@ -25,7 +25,7 @@ BASE_PATCH = os.path.join(ROOT, 'dump', 'decrypted', 'PCSG00351', 'app0_patched'
 
 
 def has_english_text(english, japanese):
-    # Done by Codex. The Japanese placeholder for MP00_010_050 differs
+    # The Japanese placeholder for MP00_010_050 differs
     # only by the width of one space in the English column.
     return bool(english.strip()) and english.split() != japanese.split()
 
@@ -35,9 +35,9 @@ def main():
     ap.add_argument('sheet'); ap.add_argument('lang'); ap.add_argument('out')
     ap.add_argument('--column'); ap.add_argument('--only'); ap.add_argument('--arabic'); ap.add_argument('--arabic-mode', default='word')
     ap.add_argument('--extra-dir', action='append', default=[], help='a folder of more files to put into the archive as they are (repeatable: the name tables of make_name_tables.py, redrawn UI textures)')
-    # Done by Codex. Update an existing English overlay without regenerating unrelated assets.
+    # Update an existing English overlay without regenerating unrelated assets.
     ap.add_argument('--layout-base', help='rebuild only dialogue, captions and speaker plates in this existing English CPK')
-    # Done by Codex. A 2x pilot can replace explicit IDs in the existing English archive.
+    # A 2x pilot can replace explicit IDs in the existing English archive.
     ap.add_argument('--english-atlas-scale', type=int, choices=(1, 2), default=1,
                     help='raster resolution for English text, with the original layout')
     a = ap.parse_args()
@@ -109,7 +109,7 @@ def main():
         for n in sorted(os.listdir(d)):
             if os.path.isfile(os.path.join(d, n)):
                 files[n] = open(os.path.join(d, n), 'rb').read()
-    # Done by Codex. Use the English source project's native text-box alignment.
+    # Use the English source project's native text-box alignment.
     if a.lang == 'en' and not a.arabic and not a.only:
         name = 'ui_field.crbpj'
         if name not in files:
@@ -125,7 +125,7 @@ def main():
     cpk_build.build(base, os.path.join(odir, 'NOVA_FileList_Vita_patch.cpk'), files)
     rep = {'lang': a.lang, 'messages': len(files), 'failed': failed, 'arabic_overrides': sorted(k for k, v in texts.items() if v[1] == 'ar')}
     if scaled:
-        rep['english_atlas_scale'] = a.english_atlas_scale  # Done by Codex.
+        rep['english_atlas_scale'] = a.english_atlas_scale
     json.dump(rep, open(os.path.join(a.out, 'build_report.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
     print('encoded %d messages, %d failed' % (len(files), len(failed)))
 

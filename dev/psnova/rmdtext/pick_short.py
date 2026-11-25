@@ -1,4 +1,4 @@
-"""Pick the menu / short-label rows of the sheet (the rows Claude translates into Arabic; dialogue and long help texts
+"""Pick the menu / short-label rows of the sheet (the rows translated into Arabic; dialogue and long help texts
 are left to the user). usage: python pick_short.py <sheet.tsv> <out.json> [maxlen=24]
 
 A row is picked when: its id is not a dialogue id (fewer than 12 digits), it has one Japanese line, at most maxlen

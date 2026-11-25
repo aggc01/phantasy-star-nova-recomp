@@ -1,4 +1,4 @@
-/* Done by Codex. Start the installed Nova runtime with its portable player directory.
+/* Start the installed Nova runtime with its portable player directory.
  *
  * Support reports and updates: every start, launch failure and exit is recorded in NovaData\Player\launch.json (the one before it
  * in launch.prev.json), with no file paths in it. A launch failure or an abnormal exit offers to create a support report (it runs

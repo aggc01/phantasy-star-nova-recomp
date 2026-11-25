@@ -48,7 +48,7 @@ ARGB written and ARGB read compose to the identity. `RECOMP_GPU_NO_SWIZZLED_VIEW
 is the same as the Luufen fork's 1deb30f (`view_swz.h`). In the fork's measurement, the arena went from 117 ms to
 33.6 ms a frame.
 
-Two agents reviewed it. Both found the math right for all 8 texture modes and all 4 colour swizzles. Their two points
+It was reviewed twice. Both reviews found the math right for all 8 texture modes and all 4 colour swizzles. Their two points
 were taken:
 
 - **Kept pages.** The noisy-texture fix (`kept_pages_find`) works only on the guest-memory path. A view of a dead target
@@ -73,7 +73,7 @@ were taken:
 ## 60 fps (done 2026-11-19, game_dev.exe and game_host.exe)
 
 The user asked for 60. The engine is built for 60, and game time comes from measured vblanks, so nothing runs double
-speed. Agent research with each finding checked by a second agent: [60fps-sites.md](60fps-sites.md). Four changes:
+speed. Research with each finding checked a second time: [60fps-sites.md](60fps-sites.md). Four changes:
 
 1. **The game's own target.** `psn_frame_rate`, a HOOKS entry at fn_81a7756c (packs/PCSG00351/hooks.c). Each frame,
    with the `frame_rate` setting at 60, it writes T+0xcc = 60 and the cloth/physics step 0x82474334 = 0.016 (the data

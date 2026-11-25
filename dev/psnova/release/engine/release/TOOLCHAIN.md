@@ -1,6 +1,5 @@
 # Windows toolchain and source notices
 
-Done by Codex.
 
 The engine carries the files needed to prepare and build Nova from supplied game data. The Nativ code comes from branch psnova, commit 5d30e61, with the current November 24 input/save/name overlay working-tree edits. Project authorship and third-party credits remain in the source files, [license](../LICENSE), and [third-party notes](../THIRD_PARTY.md).
 

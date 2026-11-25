@@ -1062,7 +1062,7 @@ const HleEntry hle_display[] = {
 	 * and on a handheld those fail. Killzone 1.12 reads port 1 once at boot to tell the two apart: a success there made it a
 	 * PS TV, which has no touch screen, and it never created its touch recognizers (no menu answered a tap) */
 	{"sceCtrlReadBufferPositive2", h_ctrl_read2}, {"sceCtrlPeekBufferPositive2", h_ctrl_peek2},
-	{"sceCtrlPeekBufferPositiveExt2", h_ctrl_peek2}, /* Done by Codex: firmware dialog polling. */
+	{"sceCtrlPeekBufferPositiveExt2", h_ctrl_peek2}, /* firmware dialog polling. */
 	{"sceAudioOutGetAdopt", h_audio_adopt},   /* (port type): 1, the type can be opened -- only voice chat or the system's music takes one */
 	{"sceDisplayGetRefreshRate", h_refresh_rate},
 	{"sceCtrlSetSamplingMode", h_ctrl_mode}, {"sceCtrlSetSamplingModeExt", h_ctrl_mode}, {"sceTouchSetSamplingState", h_touch_sampling},

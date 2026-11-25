@@ -1,4 +1,4 @@
-/* Done by Codex. */
+
 #include "../../../runtime/ui/nova_save_display.h"
 #include <cassert>
 extern "C" const char *host_lang(void) { return "en"; }

@@ -26,7 +26,7 @@ VAR_BASE, VAR_SLOT = 0xfff00000, 0x1000
 
 
 def main():
-    # Done by Codex. Argument-bearing firmware modules start on a guest load request.
+    # Argument-bearing firmware modules start on a guest load request.
     deferred = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--defer-start=")), None)
     is_module = "--module" in sys.argv
     sys.argv = [a for a in sys.argv if a != "--module" and not a.startswith("--defer-start=")]

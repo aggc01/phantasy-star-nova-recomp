@@ -999,7 +999,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 			/* exclusive while open: the menu gets every key/mouse/gamepad event instead of the game
 			 * (which is paused anyway -- display.c) */
 			if (overlay_is_open()) { overlay_process_event(&e); continue; }
-			/* Done by Codex. Dialogs own input, while controller connection events
+			/* Dialogs own input, while controller connection events
 			 * still reach the window's device management below. */
 			if (overlay_dialog_active() && e.type != SDL_EVENT_GAMEPAD_ADDED && e.type != SDL_EVENT_GAMEPAD_REMOVED) {
 				overlay_process_event(&e); continue;
@@ -1348,7 +1348,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 		{	/* the menu just closed (any way: F10, Escape, a pad combo, its Resume button): the sticks moved
 			 * while it had the events -- a stick let go with the menu up would otherwise stay deflected */
 			static int was_open; int open = overlay_is_open() || overlay_dialog_active();
-			if (open) { /* Done by Codex: keep gameplay neutral throughout the prompt. */
+			if (open) { /* keep gameplay neutral throughout the prompt. */
 				buttons = 0; touch_down = 0; kbm_lmb = kbm_rmb = 0;
 				gamepad_touch_release();
 				for (int i = 0; i < KB_N; i++) kb_binds[i].held = 0;

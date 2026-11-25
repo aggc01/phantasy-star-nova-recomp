@@ -1,4 +1,4 @@
-"""Run Nova's original Vita dialog code in an isolated test build. Done by Codex."""
+"""Run Nova's original Vita dialog code in an isolated test build."""
 
 import argparse
 import hashlib
@@ -10,7 +10,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 TITLE = ROOT / "dump" / "decrypted" / "PCSG00351"
-STAGE = ROOT / "dump" / "codex-firmware-dialogs"
+STAGE = ROOT / "dump" / "firmware-dialogs"
 BASE_MODULES = ("libc", "libgxm_es4", "libgpu_es4", "libscemp4", "libsceavplayer")
 PROFILES = {
     "save-client": ("game_firmware_probe", ("libcdlg",)),

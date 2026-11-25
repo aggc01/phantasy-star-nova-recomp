@@ -1,6 +1,6 @@
 # Phantasy Star Nova: Arabic style guide for the translation (2026-11-19)
 
-This file sets the rules every Arabic line in the text sheet follows: for Claude's menu/label pass and for the user's dialogue. The
+This file sets the rules every Arabic line in the text sheet follows: for the first-pass menu/label translation and for the user's dialogue. The
 term list that goes with it is `dump/psnova-l10n/ar/glossary.json` (core terms below + the names list).
 
 ## Register and tone

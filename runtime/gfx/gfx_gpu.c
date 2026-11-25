@@ -1468,7 +1468,7 @@ static TexEntry *get_texture(const GfxTexture *t) {
 	{ int hint = tex_index[key] - 1; if (hint >= 0 && hint < ntextures && TEX_MATCH(&textures[hint])) e = &textures[hint]; }
 	if (!e) for (int i = 0; i < ntextures; i++) { TexEntry *x = &textures[i]; if (TEX_MATCH(x)) { e = x; tex_index[key] = (uint16_t)(i + 1); break; } }
 	#undef TEX_MATCH
-	/* Done by Codex. P8 palettes can change independently of the watched index pages. */
+	/* P8 palettes can change independently of the watched index pages. */
 	uint64_t palette_hash = t->palette ? hash_bytes(G(t->palette), GFX_TEX_P8_PALETTE_BYTES) : 0;
 	int palette_changed = e && e->palette_hash != palette_hash;
 	if (e && e->ph && e->layout == layout && !e->full && !palette_changed) {   /* the common case: nothing written over it since its last check */
@@ -1575,7 +1575,7 @@ typedef struct {
 	uint64_t drawn_frame, prev_drawn_frame;   /* the last two frames (gpu_frame_no) a scene drew into it: drawn every frame, or now and then (skip_lossless) */
 	int alias_in;                 /* this scene began with another target's bytes handed over (target_alias_sync): not its own last frame (skip_lossless) */
 	int cpu_dirty;   /* guest memory was written since the GPU texture was last uploaded (a CPU-fallback draw happened) */
-	uint8_t *present_pixels;   /* native pixels from this display target's last GPU download. Done by Codex. */
+	uint8_t *present_pixels;   /* native pixels from this display target's last GPU download. */
 	uint64_t present_pixels_gen;
 	int gpu_dirty;   /* the GPU texture has content guest memory doesn't (a GPU draw happened since the last download) */
 	uint64_t used;   /* last use, for eviction */
@@ -1947,7 +1947,7 @@ static void target_upload_from_guest(TargetEntry *e) {
 /* the GPU colour texture -> RGBA floats in a caller-owned buffer (not guest memory: RECOMP_GFX_CHECK
  * compares it against the software path without the two stepping on each other) */
 static int hud_scene(uint32_t addr);
-/* Done by Codex. A readback makes native guest pixels current while the GPU still owns the
+/* A readback makes native guest pixels current while the GPU still owns the
  * detailed image. Remember exactly the bytes transferred, so direct CPU writes can win at present. */
 static void remember_present_pixels(TargetEntry *e, const uint8_t *pixels, size_t bytes) {
 	if (!TSCALED(e) || !hud_scene(e->addr)) return;

@@ -42,7 +42,7 @@
 #include "usse.h"
 #include "platform.h"
 
-/* Done by Codex. Version 1 stored the 16-byte texture prefix in both
+/* Version 1 stored the 16-byte texture prefix in both
  * arrays. Older records can also end before the later draw fields. */
 static void read_legacy_draw(GfxDraw *draw, const uint8_t *bytes, size_t size) {
 	const size_t texture_size = offsetof(GfxTexture, palette);

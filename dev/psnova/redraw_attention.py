@@ -28,7 +28,7 @@ FONT_FILE = {'en': os.path.join(R, _FJ['warning_english']['file']), 'ar': os.pat
 #   知りながらダウンロードする行為は法律で固く禁じられております。みなさまのご理解とご協力をお願いいたします。
 TEXT = {
     "en": {
-        # Three centered lines including the title. Done by Codex.
+        # Three centered lines including the title.
         "size": 20, "heading_size": 32, "align": "center",
         "centers": [223, 278, 319],
         "heading": "Notice",

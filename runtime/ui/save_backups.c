@@ -27,7 +27,7 @@
 #include <time.h>
 #include <unistd.h>
 
-/* Done by Codex. Store backups beside the portable saves when configured. */
+/* Store backups beside the portable saves when configured. */
 void save_backups_dir(char *buf, size_t n) {
 	const char *root = player_save_override();
 	snprintf(buf, n, root ? "%s/save_backups" : "%s/../save_backups", player_save_root());

@@ -56,7 +56,7 @@ static void h_net_dlg_result(Cpu *c) {
 static void h_eula_dlg_result(Cpu *c) { if (A0) { for (int i = 0; i < 0x2c; i += 4) WR32(A0 + i, 0); WR32(A0 + 4, 2); } RET(0); }
 static void h_zero(Cpu *c) { RET(0); }
 
-/* Done by Codex. The firmware dialog passes startup arguments through
+/* The firmware dialog passes startup arguments through
  * SceSysmoduleOpt. These entries resolve only in the isolated firmware probe. */
 enum { FW_MODULE_IDLE, FW_MODULE_STARTING, FW_MODULE_STARTED };
 typedef struct {
@@ -137,7 +137,7 @@ static void h_sysmodule_unload_with_arg(Cpu *c) {
 	RET(0);
 }
 
-/* Done by Codex. A mounted vs0 already has a Vita path in this runtime. */
+/* A mounted vs0 already has a Vita path in this runtime. */
 static void h_convert_vs0_path(Cpu *c) {
 	if (!A0 || !A1 || !A2) { RET(0x80010016u); return; }
 	const char *path = (const char *)G(A0);
@@ -156,7 +156,7 @@ static void h_dialog_display_resolution(Cpu *c) {
 	RET(0);
 }
 
-/* Done by Codex. PAF opens the save plug-in by path, then passes its plug-in
+/* PAF opens the save plug-in by path, then passes its plug-in
  * interface pointer to module_start. The image has already been mapped. */
 #define FW_SAVE_MODULE_UID 0x62000015u
 static void h_load_dialog_plugin(Cpu *c) {
@@ -199,9 +199,9 @@ static void h_stop_dialog_plugin(Cpu *c) {
 
 static void h_unload_dialog_plugin(Cpu *c) { RET(A0 == FW_SAVE_MODULE_UID ? 0 : 0x80010016u); }
 
-/* Done by Codex. The isolated firmware images and resources are Vita 3.74. */
+/* The isolated firmware images and resources are Vita 3.74. */
 static void h_firmware_sdk_version(Cpu *c) { RET(0x03740000u); }
-/* Done by Codex. The firmware reads the configured UI language and confirm button. */
+/* The firmware reads the configured UI language and confirm button. */
 static void h_firmware_system_param(Cpu *c) {
 	extern const char *host_lang(void);
 	if (!A1 || (A0 != 0x00037502u && A0 != 0x00229142u)) { RET(0x800d0004u); return; }
@@ -263,7 +263,7 @@ static int slot_read(uint32_t id, uint8_t *p) {   /* the slot's param into p (ze
 	fclose(f); return 1;
 }
 
-/* Done by Codex. The 3.74 savedata plug-in opens a slot-file snapshot into a 0x228-byte
+/* The 3.74 savedata plug-in opens a slot-file snapshot into a 0x228-byte
  * buffer and indexes its signed existence bytes at +0x28 by slot ID. Its
  * GetParam then asks for the 0x400-byte record by ID, whose first 0x34c bytes
  * are the AppUtil slot parameter. The host stores these in .slot<N> files. */
@@ -286,7 +286,7 @@ static void h_firmware_slot_file_get_param(Cpu *c) {
 }
 static void h_firmware_slot_file_close(Cpu *c) { RET(A0 ? 0 : 0x80100600u); }
 
-/* Done by Codex. The firmware plug-in uses a size-tagged AppMgr request.
+/* The firmware plug-in uses a size-tagged AppMgr request.
  * Read the same slot metadata as the host picker and localize its display copy. */
 static void h_firmware_slot_param(Cpu *c) {
 	if (!A0 || RD32(A0) != 0x418 ||
@@ -446,7 +446,7 @@ static void sd_add_row(uint32_t id, uint32_t empty) {
 		slot_text(p + 0x4, 64, r->title, sizeof r->title);
 		const char *title_id = getenv("RECOMP_TITLE");
 		if (title_id && !strcmp(title_id, "PCSG00351")) {
-			/* Done by Codex. Nova stores UTF-8, including the literal player name. */
+			/* Nova stores UTF-8, including the literal player name. */
 			memcpy(r->sub, p + 0x44, 128);
 		} else {
 			slot_text(p + 0x44, 128, r->sub, sizeof r->sub);
@@ -779,7 +779,7 @@ static void h_ime_dialog_init(Cpu *c) {
  * code copies the text only while the keyboard is still open after an UPDATE_TEXT, so the answer comes over separate
  * updates as if typed: OPEN, then the text (ime_fill) with UPDATE_TEXT, then PRESS_ENTER a few updates later.
  * Nova uses an interactive overlay; other titles and headless runs keep the original automatic answer. */
-/* Done by Codex: the UI only exchanges snapshots and UTF-8 with this bridge. Guest memory and callbacks stay on the guest thread. */
+/* The UI only exchanges snapshots and UTF-8 with this bridge. Guest memory and callbacks stay on the guest thread. */
 #define IME_UNITS 1023
 static pthread_mutex_t ime_mu = PTHREAD_MUTEX_INITIALIZER;
 static struct {
@@ -853,7 +853,7 @@ static void ime_event(Cpu *c, uint32_t id, uint32_t caret) {
 static void h_ime_open(Cpu *c) {
  if (!A0) { RET(0x80100702u); return; }
  pthread_mutex_lock(&ime_mu);
- /* Done by Codex. A completed interactive request no longer owns input, even
+ /* A completed interactive request no longer owns input, even
   * if the guest defers Close until the next trip through the naming screen. */
  if (ime.open && (!ime.interactive || ime.phase < 4)) {
   pthread_mutex_unlock(&ime_mu); RET(0x80100701u); return;

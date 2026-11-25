@@ -130,7 +130,7 @@ def gxm_for(W, H, content, src=None, msg_id=0):
     return bytes(t)
 
 
-# Done by Codex. Scale the stored texture while keeping the glyphs' logical sizes and UVs.
+# Scale the stored texture while keeping the glyphs' logical sizes and UVs.
 def build_rmd(msg_id, text_bytes, glyphs, region=None, box=(0.0, 21.0), gxm=None, size=None, positions=None,
               gxm_src=None, atlas_scale=1):
     if atlas_scale not in (1, 2):
@@ -163,7 +163,7 @@ def build_rmd(msg_id, text_bytes, glyphs, region=None, box=(0.0, 21.0), gxm=None
             pic = glyph[3] if len(glyph) == 4 else pic.repeat(2, axis=0).repeat(2, axis=1)
         atlas[y * atlas_scale:(y + h) * atlas_scale, x * atlas_scale:(x + w) * atlas_scale] = pic
         recs.append(struct.pack('<BBH4f', adv, cls, 0, x / W, y / H, (x + w) / W, (y + h) / H))
-    # Done by Codex. The RMD dimensions affect guest glyph placement.
+    # The RMD dimensions affect guest glyph placement.
     # The GXM chunk carries the larger dimensions of the physical texture.
     texture_height, texture_width = atlas.shape
     texture_chunk_size = 0x1e0 + atlas.size

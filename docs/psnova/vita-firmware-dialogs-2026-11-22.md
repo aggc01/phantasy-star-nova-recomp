@@ -1,6 +1,5 @@
 # Nova Vita firmware dialogs
 
-Done by Codex, 22 November 2026.
 
 The original Vita save picker and IME work are paused at the player's request. The ordinary PC launcher continues with the recomp's own dialogs.
 
@@ -22,7 +21,7 @@ The screenshots from the normal launcher show the English PC dialogs. The native
 - Circle selected the highlighted entry and Nova called `sceSaveDataDialogContinue`. The firmware read that slot's second-stage metadata. The confirmation stayed black through frame 3400 and Nova had yet to open the slot payload.
 - Capture `nova-native-dialog-f2990.vfc` shows that the SOP2 shader uses a 400×62 P8 texture for the selection effect. The 12 PAF draws in that frame are the close button, row backgrounds, icons, information buttons, selection effect, and a small strip. The capture contains no separate glyph-atlas draw. The missing labels now need investigation on the PAF/PVF side as well as a second-session render check.
 - The targeted module trace confirmed that the original Latin and Japanese font faces open and provide metrics. PAF called `scePvfGetCharInfo` 28,898 times for the first letter `L` and never called `scePvfGetCharGlyphImage`. In the confirmation capture `nova-native-dialog-f3180.vfc`, PAF began a scene and submitted zero draws. The captured stack places the repeating metrics call in PAF's text layout route through `0x900964e4`, `0x90095e1a` and `0x9019bd62`. The text cursor remains at index zero. The same run selected slot 2 and reached the confirmation, and its delayed Circle pulse did not open `savedata2.bin`.
-- The VFC captures are in the Codex workspace output directory on C. The staged run logs are retained on F. Use the probe's `--capture-frame` and `--capture-output` for a new single-frame capture, and `--trace-module scePvf,SceFt2` to trace the original font calls. The font trace is large when the layout loop persists.
+- The VFC captures are in the workspace output directory on C. The staged run logs are retained on F. Use the probe's `--capture-frame` and `--capture-output` for a new single-frame capture, and `--trace-module scePvf,SceFt2` to trace the original font calls. The font trace is large when the layout loop persists.
 
 ## Controller keyboard
 

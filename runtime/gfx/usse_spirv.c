@@ -953,7 +953,7 @@ static void imad_offsets(Gen *g, const UOp *op, int r, int off[4], int *ok) {
  * whether I8MAD should see the full packed word is a question for it, not this port) */
 static uint32_t read_word(Gen *g, const UOperand *o, int off, int *ok) { return read_raw_comp(g, o, off, 0, ok); }
 static void write_word(Gen *g, const UOperand *o, int off, uint32_t v, int *ok) { write_raw_comp(g, o, off, 0, v, ok); }
-/* Done by Codex. PAF text blends packed RGBA with the framebuffer using SOP2. */
+/* PAF text blends packed RGBA with the framebuffer using SOP2. */
 static uint32_t sop2_factor(Spv *s, const uint32_t *values, int arg) {
 	uint32_t factor = values[arg & 0xff];
 	return arg & 0x100 ? fop2(s, SpvOpFSub, c_float(s, 1), factor) : factor;

@@ -113,7 +113,7 @@ static void begin_if_needed(void) {
 	gfx_sync_to_guest();   /* the GPU path's render targets into guest memory: the snapshot's starting state */
 	out = fopen(path, "wb");
 	if (!out) { perror(path); done = 1; return; }
-	uint32_t version = 2;   /* Done by Codex. GfxDraw now includes a palette address per texture. */
+	uint32_t version = 2;   /* GfxDraw now includes a palette address per texture. */
 	fwrite("VFCP", 1, 4, out); fwrite(&version, 4, 1, out);
 	fprintf(stderr, "capture: frame %ld -> %s\n", want, path);
 }

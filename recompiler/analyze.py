@@ -439,7 +439,7 @@ class Analyser:
         return targets, (base, base + 4 * len(targets))
 
     def thumb_ldr_pc_table(self, insn, prev):
-        """Done by Codex. Bounded Thumb switch via ADR and LDR pc, [Rn, Rm, LSL #2]."""
+        """Bounded Thumb switch via ADR and LDR pc, [Rn, Rm, LSL #2]."""
         if not prev or len(insn.operands) != 2 or insn.operands[1].type != ARM_OP_MEM:
             return None
         operand = insn.operands[1]

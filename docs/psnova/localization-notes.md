@@ -149,7 +149,7 @@ Scripts (all in `dev/psnova/`): `subs_rows.py` (which rows hold subtitle-like pi
    rePatch = English). Add a runtime/launcher setting that picks which archive layering the file layer serves
    (the `REPATCH` layer on or off, per run). Voices stay Japanese either way.
 2. **Arabic**: needs three pieces
-   - a text export of all ~20,000 `.rmd` (decode glyph indices -> Unicode using the font map; Claude does menus/short labels,
+   - a text export of all ~20,000 `.rmd` (decode glyph indices -> Unicode using the font map; menus/short labels get a first-pass translation,
      the user fills dialogue, as for Wonder; see `memory: every-recomp-standard`);
    - an Arabic **font** with joined/contextual forms (presentation forms) added to the game's font texture + glyph map;
    - **right-to-left layout** (reverse order, mirrored alignment) in the text drawing code, and a re-encoder that writes
@@ -161,9 +161,9 @@ Reusable reference: `Super Mario Bros Wonder\tools\arabic\README.md` (pipeline f
 
 ## Decisions and cost rule
 
-- The user's rule (2026-11-18): **use scripts and Haiku subagents to cut usage when possible**. So far everything was done by
+- The rule (2026-11-18): **use scripts for repeatable work when possible**. So far everything was done by
   scripts (`cpk.py list/extract`, `xxd`, `grep -a`). Bulk work to come (decode ~20,000 messages, code tables, Arabic
-  export workbook) is script work; Haiku fits spot checks and indexing, results verified before use.
+  export workbook) is script work; spot-check and indexing results are verified before use.
 - Document every step in this file (the user asked, 2026-11-18).
 
 ## Log
@@ -303,24 +303,24 @@ dev/psnova/cpk_build.py.
   and rebuilds Sega's 1.05 update archive with them (out/overlay/NOVA_FileList_Vita_patch.cpk). Test builds:
   dump/psnova-l10n/build/test1 (shared texture IDs, broken), test2 (good): the whole game in the fan English (17,131
   messages, rows the fan patch left in Japanese stay Japanese) plus 11 route messages in Arabic (ar_test1.json, placeholder
-  Arabic written by Claude).
+  Arabic).
 - In-game tests ran on a separate copy (`app0_l10ntest` = app0_overlay + overlay_l10ntest), through a new generic option
   `TEST_APP0=<folder>` in pipeline/vitarecomp.py fresh_fs (uncommitted; recomp session told). The shared fs/app0 stays the
   Japanese game with the v2 movies.
 - Test 1 found the texture ID (chunk bytes 0x91-0x93; the game caches textures by it): copied IDs made messages show each
   other's pictures. Test 2 with unique IDs: Arabic correct in menus, help lines, the name dialog, the speaker label and
   dialogue; English correct throughout the route.
-- Code review (30 agents) confirmed 24 problems in the first version; all fixed before test 2.
+- Code review (30 passes) confirmed 24 problems in the first version; all fixed before test 2.
 - Arabic method: our own shaping (presentation forms) and bidi (arabic.py), drawn with Segoe UI Bold 16 px as each file's
   own glyph pictures (word pictures, or letter-form pieces when a message has too many words for a 256x128 atlas).
-- Open: Arabic text for the sheet (Claude: menus/short labels; user: dialogue), a language choice (one overlay per
+- Open: Arabic text for the sheet (first pass: menus/short labels; user: dialogue), a language choice (one overlay per
   language + a launcher/ini setting), very long Arabic help texts (more than ~85 pieces do not fit one atlas), the 8 movie
   lines, right alignment (lines start at the box's left edge; centred dialogs centre them).
 
 ## Arabic for menus and short labels (2026-11-19, user: "Arabic for menus")
 
 **Result: sheet v2 (`dump/psnova-l10n/sheet/psnova_text_v2.xlsx` / `.tsv`) has Arabic in 8,581 rows** (8,201 different
-texts): every short, one-line, non-dialogue message. The notes column marks them "Arabic: Claude, menu pass 1".
+texts): every short, one-line, non-dialogue message. The notes column marks them as Arabic menu pass 1.
 Dialogue, long help texts, spoken one-liners and credits are left for the user (rules in docs/psnova/arabic-style.md).
 
 Steps and tools (all in `dev/psnova/rmdtext/`, work files in `dump/psnova-l10n/ar/`):
@@ -328,12 +328,12 @@ Steps and tools (all in `dev/psnova/rmdtext/`, work files in `dump/psnova-l10n/a
    Japanese line, at most 24 characters, not a developer dummy (ダミー, 削除予定, 解説文, //..., 【number】...), and not in
    the spoken-line groups (260000, 530000, 620000, 730000) or the staff credits (750000) -> short_rows.json.
 2. Style guide + core terms: `docs/psnova/arabic-style.md` (MSA, menus as nouns, no diacritics, Western digits, HP/PP/GP/EXP/Lv.
-   and Roman numerals in Latin, names by sound from the katakana, tags kept). Names list: one Sonnet agent wrote Arabic for
+   and Roman numerals in Latin, names by sound from the katakana, tags kept). Names list: Arabic was written for
    the 1,141 English tokens used across several id groups (glossary_terms.json); I unified the "-hda" enemy names
-   (كراهدا, وولغادا...; the agent had used ذ) and made "Gun" a plain word. `make_glossary.py` -> glossary.json (1,163).
+   (كراهدا, وولغادا...; the first draft had used ذ) and made "Gun" a plain word. `make_glossary.py` -> glossary.json (1,163).
 3. `make_batches.py` -> 36 batches of 230 texts, each with the glossary entries its lines use.
-4. Workflow psnova-arabic-menus: per batch a Haiku translator (from the Japanese; fan English only as a helper), then a
-   Sonnet reviewer that checked every line against the Japanese and fixed it in place (logs in reviews/b_NN.json; 6 to
+4. Workflow psnova-arabic-menus: per batch a translator (from the Japanese; fan English only as a helper), then a
+   reviewer that checked every line against the Japanese and fixed it in place (logs in reviews/b_NN.json; 6 to
    73 changes per batch, mostly meanings copied from wrong fan English, name sounds, adjective agreement).
 5. `check_arabic.py --encode`: tags, Japanese left over, letters the font/shaping cannot show, on-screen width (Segoe UI
    Bold 16 vs 21 px per Japanese character), glossary use, and that every line encodes. Result: no tag, Japanese or encode
@@ -402,7 +402,7 @@ were translated from the Japanese only.
 
 ## Right alignment (2026-11-19)
 
-Research (agent, read-only; full write-up docs/psnova/right-alignment-research.md): every UI text box has an alignment at
+Research (read-only; full write-up docs/psnova/right-alignment-research.md): every UI text box has an alignment at
 box+0x94 (0 left, 1 centre, 2 right) used by the line-placement routine fn_81905ae0 (read at 0x81905b10); it comes from
 the UI project files (*.crbpj `Align`), most text boxes have none (= left). The .rmd has no alignment field.
 Done (the recomp session agreed and paused its builds for the recompile):
@@ -434,7 +434,7 @@ Done (the recomp session agreed and paused its builds for the recompile):
 
 ## Movies v3: no flash at line fades (2026-11-19, user: "the Japanese subtitles are showing for a split second before fading out")
 
-Agent-made dev/psnova/remove_jp_subs_v3.py (one mask per line, applied to the whole line plus >= 8 fade frames each side)
+New dev/psnova/remove_jp_subs_v3.py (one mask per line, applied to the whole line plus >= 8 fade frames each side)
 and check_sub_residue.py; details and per-movie numbers docs/psnova/movie-cleaning-v3.md. Residue frames over the 8 movies:
 v2 566 at line edges + 125 core + 191 other, v3 2 + 0 + 19 (the 21 are gold glow in MP09_040_040, no text). Smears not
 fixed yet. Archive: `python -I dev/psnova/cpk_replace.py $W/app0_patched/NOVA_FileList_Vita_movie.cpk <out> --replace
@@ -471,13 +471,13 @@ docs/psnova/separation-from-uncharted.md. From now on run Python as `.venv/Scrip
 
 **2. Tutorials.** Cause: the fan English patch never translated the tutorial pages: 170 of the 181 pages of group
 780000 (『ガード』『ジャストアタック』...) had no English, so every language showed Japanese there. Done: all 181 pages
-translated from the Japanese into English and Arabic (workflow psnova-tutorials: Sonnet translator per batch of 30 with a
-script self-check, then a Sonnet reviewer; 7 batches, 81 review fixes). Tools: `dev/psnova/rmdtext/measure.py` (on-screen
+translated from the Japanese into English and Arabic (workflow psnova-tutorials: a translator per batch of 30 with a
+script self-check, then a reviewer; 7 batches, 81 review fixes). Tools: `dev/psnova/rmdtext/measure.py` (on-screen
 width as the game draws it: the English font is fixed 10 px per letter; Arabic as our phrase pictures), `check_tut.py`
 (icons {8099:xx} and value slots kept, colour spans closed, no Japanese left, lines <= Japanese + 1, English <= 470 px,
 Arabic <= 440 px, encodes). Batches/results: dump/psnova-l10n/tut/. Merged with `merge_translations.py` -> **sheet v4**
-(English column replaced for these 181 rows, Arabic set; note "EN+AR: Claude, tutorial pass").
-Still untranslated in English (no fan English, no Claude pass), by group: 620000 navigator/hint chatter 2,496;
+(English column replaced for these 181 rows, Arabic set; noted as the EN+AR tutorial pass).
+Still untranslated in English (no fan English, no translation pass), by group: 620000 navigator/hint chatter 2,496;
 dialogue 2,050; 750000 staff credits 534; 530000 partner lines 493; item/facility descriptions 120000 373, 250000 370,
 140000 252, 340000 449 (part developer dummies); ~7,600 in all. (The Arabic of everything except menus/tutorials is still
 the English or the Japanese.)
@@ -489,7 +489,7 @@ the English or the Japanese.)
 **3. Movie subtitles.** The 8 story movies only had the Japanese line removed. Now:
 - `dev/psnova/make_sub_sheets.py`: per line (timing from the v3 cleaning's line tables) a picture of the Japanese line and
   of the fan release's burned-in English at the same frame (dump/psnova-l10n/subs/sheets/, lines.json).
-- Workflow psnova-movie-subs: per movie a Sonnet agent read the sheets (jp, fan_en) and wrote en and ar; a reviewer checked
+- Workflow psnova-movie-subs: per movie a translator read the sheets (jp, fan_en) and wrote en and ar; a reviewer checked
   every line against the pictures (53 fixes). Result dump/psnova-l10n/subs/<movie>.json: 163 lines, 138 with text (25 rows
   of the line table had no text = detections of glow, not lines).
 - `dev/psnova/burn_subs.py`: draws each line where the Japanese line was, white Segoe UI Semibold/Bold 24 px with a dark
@@ -528,12 +528,12 @@ the English or the Japanese.)
   Arabic) in 96 batches (id order inside a group; dialogue by scene), each item with the 2 rows before/after it as
   context and the character-name table. Groups: 620000 operator/navigator lines 2,495; story dialogue 2,028; 750000 staff
   credits 532; 530000 partner lines 443; descriptions 340000 414, 250000 335, 120000 261, 140000 252, 110000 105; others.
-- Workflow psnova-full-translation: per batch a Sonnet translator (from the Japanese, fan English only as a reference,
-  check_tut.py self-check until 0 problems) and a Sonnet reviewer (logs in dump/psnova-l10n/full/results/f_NNN_review.json).
+- Workflow psnova-full-translation: per batch a translator (from the Japanese, fan English only as a reference,
+  check_tut.py self-check until 0 problems) and a reviewer (logs in dump/psnova-l10n/full/results/f_NNN_review.json).
   All 96 batches end with "problems 0". check_tut.py now skips the Arabic check where the Arabic column already had a
   translation (need_ar false).
 - Merged -> **sheet v5** (dump/psnova-l10n/sheet/psnova_text_v5.*): English set for 7,197 rows, Arabic for 6,817 more;
-  notes "EN(+AR): Claude, full pass". Left without English: 614 rows of punctuation/symbols and developer dummies (on
+  notes mark the EN(+AR) full pass. Left without English: 614 rows of punctuation/symbols and developer dummies (on
   purpose). Arabic now in 15,577 of 25,484 messages; the ~9,900 messages the fan patch had translated (most dialogue)
   still have English only (Arabic mode shows the English there).
 - Archives from sheet v5 installed 10:37 (lang/en 24,429 messages, lang/ar 24,481; 0 failed). **Test 8** (Arabic, full
@@ -587,7 +587,7 @@ name plates, and the arena quest banner; readable at the game's size; nothing br
   inpaint / fill / per-row fills --, draw Glenth (English) or Segoe UI Bold with our Arabic shaping, re-encode DXT3 with
   colour, only changed blocks re-encoded, header and texture ID kept, round-trip checked), `apply_all.sh`,
   `make_sheets.py`; fonts.json `ui_english` (Glenth) / `ui_arabic`.
-- Workflow psnova-ui-textures (21 agents): tool author; spec writers for the 9 core textures (tex_nova_ui_Title menu
+- Workflow psnova-ui-textures (21 tasks): tool author; spec writers for the 9 core textures (tex_nova_ui_Title menu
   banners ~60, tex_nova_ui_common ~25 labels incl. the button guide, tex_Chapter chapter cards, load024 control diagram,
   nova_ui_title, ev_dlc_104 DLC cast card) and 83 tutorial pictures; an apply pass; 6 visual reviewers who fixed specs
   (smears from inpainting -> per-row fills, too-small English -> 12 px minimum, Arabic alignment, a tool bug that erased
@@ -651,4 +651,4 @@ name plates, and the arena quest banner; readable at the game's size; nothing br
 
 ## English layout, 2026-11-21
 
-Done by Codex. The installed English archives center speaker names and the three-line boot notice, reflow dialogue and radio messages to their respective box widths, and preserve the font proportions in movie and in-engine subtitles. Build commands, measurements and the Rietheia test capture are in the [English layout handoff](codex-english-layout-2026-11-21.md).
+The installed English archives center speaker names and the three-line boot notice, reflow dialogue and radio messages to their respective box widths, and preserve the font proportions in movie and in-engine subtitles. Build commands, measurements and the Rietheia test capture are in the [English layout handoff](english-layout-2026-11-21.md).

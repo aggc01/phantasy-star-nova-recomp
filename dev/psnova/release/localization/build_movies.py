@@ -1,4 +1,4 @@
-"""Build the Windows release's English movie archive from the player's copy. Done by Codex."""
+"""Build the Windows release's English movie archive from the player's copy."""
 
 import argparse
 import hashlib

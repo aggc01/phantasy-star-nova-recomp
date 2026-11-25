@@ -1,7 +1,7 @@
 # English text faults seen in the user's recordings (2026-11-19 evening)
 
 Found by the recomp session while reviewing the user's nine recordings (`dump/user-videos-2026-11-19/`, review in
-`review.txt` there; tools `dev/psnova/video_review.sh`, workflow psnova-video-review, 68 agents, each fault re-checked
+`review.txt` there; tools `dev/psnova/video_review.sh`, workflow psnova-video-review, 68 review tasks, each fault re-checked
 on full frames). This is a report for the localization session: its tools were read, not changed.
 
 ## 1. Cutscene subtitles: words at different sizes, "I" as a block
@@ -79,7 +79,7 @@ both, so it is the one recommended. Not done yet: the localization session owns 
 
 ## 6. The opening movie has no subtitles (user, 2026-11-19 evening)
 
-Update, 2026-11-21. Codex found a Japanese radio announcement around 00:12.75–00:24.08 and installed the user's English subtitles. See [Opening preview subtitles](codex-opening-announcement-2026-11-21.md). Done by Codex.
+Update, 2026-11-21. A Japanese radio announcement was found around 00:12.75–00:24.08 and the user's English subtitles were installed. See [Opening preview subtitles](opening-announcement-2026-11-21.md).
 
 `OpeningDemo.mp4` (2:20, plays after the logos, before the title) is byte-identical in lang/en and app0: the localization
 left it out on purpose (localization-notes.md: "in-universe decorative script ... no Japanese subtitle line ... ask the

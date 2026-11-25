@@ -22,7 +22,7 @@ extern "C" {
  * as a key cap, "\n" breaks the line. Up to three stack, newest on top; the same one again runs on instead */
 void overlay_toast_titled(const char *title, const char *body, double seconds);
 void overlay_toast(const char *msg, double seconds);   /* (no title) */
-/* Done by Codex. Save and name-entry prompts own input while the guest polls.
+/* Save and name-entry prompts own input while the guest polls.
  * The window forwards events to the overlay, releases mouse capture and neutralizes gameplay input. */
 int overlay_dialog_active(void);
 

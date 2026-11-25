@@ -1,4 +1,4 @@
-"""English dialogue and caption layout. Done by Codex."""
+"""English dialogue and caption layout."""
 
 import re
 from functools import lru_cache
@@ -58,7 +58,7 @@ def message_contexts(scan_dir, sheet_ids=()):
     if not captions or not dialogue:
         raise ValueError(f'English layout requires extracted event scripts and caption lists in {scan_dir}')
     dialogue.update(table_dialogue - selections)
-    # Done by Codex. Some sheet v7 NPC and battle voice variants have no
+    # Some sheet v7 NPC and battle voice variants have no
     # literal caller (e.g. 302010020011099 vs the table's 302010020011000).
     # These two 15-digit banks contain field conversations and transmissions.
     # Explicit selection IDs are still excluded. Unreferenced main-story

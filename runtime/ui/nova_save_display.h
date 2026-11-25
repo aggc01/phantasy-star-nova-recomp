@@ -1,4 +1,4 @@
-/* Done by Codex: display-only translations for Nova's saved slot words.
+/* Display-only translations for Nova's saved slot words.
  * Sheet: psnova_text_v7, classes 10201-10204 and chapter names 810400-810413.
  * Never changes the game's save data. Unknown fields pass through unchanged. */
 #ifndef NOVA_SAVE_DISPLAY_H

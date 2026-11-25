@@ -34,7 +34,7 @@
 
 static uint64_t fios_now_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000; }
 void io_read_note(int64_t n, uint64_t us, int archive);   /* io.c */
-/* Done by Codex. Use the same mount resolution for kernel and FIOS calls. */
+/* Use the same mount resolution for kernel and FIOS calls. */
 static const char *fios_path(uint32_t gp, char *buf, size_t n) {
 	return host_path_s((char *)G(gp), buf, n);
 }

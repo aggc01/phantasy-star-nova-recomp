@@ -1,4 +1,4 @@
-"""Rebuild the current English text and UI overlay from the player's CPKs. Done by Codex."""
+"""Rebuild the current English text and UI overlay from the player's CPKs."""
 
 import argparse
 import hashlib

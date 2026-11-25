@@ -192,7 +192,7 @@ def main(argv):
     # would no longer match its signature). Each object is written to a temporary and renamed into place (whole or not
     # at all), so two builds of one title never see a half-written .o.
     IMGUI = os.path.join(ROOT, "third_party", "imgui"); IMGUIOBJ = os.path.join(OBJ, "imgui"); os.makedirs(IMGUIOBJ, exist_ok=True)
-    # Done by Codex. Preserve supplementary Unicode characters from SDL text input.
+    # Preserve supplementary Unicode characters from SDL text input.
     CXXFLAGS = ["-O2", "-std=c++17", "-DIMGUI_USE_WCHAR32", "-w", "-I", IMGUI, "-I", os.path.join(IMGUI, "backends")] + INCLUDES + sdl_cflags
     if WIN: CXXFLAGS += ["-D_FILE_OFFSET_BITS=64", "-include", os.path.join(RT, "platform", "win32_compat.h")]
     imgui_srcs = [os.path.join(IMGUI, f) for f in ("imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp", os.path.join("backends", "imgui_impl_sdl3.cpp"), os.path.join("backends", "imgui_impl_sdlgpu3.cpp"))] + [os.path.join(RT, "ui", "overlay.cpp")]
@@ -280,7 +280,7 @@ def main(argv):
     link = [CC] + FLAGS + ENVDEF + ["-Wall"] + sdl_cflags + PLATFORM + host + EXTRA + objs + sdl_libs + SPIRV_CROSS + AVCODEC + CURL + CXXLIB + LIBS + ["-o", OUT]
     sys.stdout.flush()
     if HOSTED_WINDOWS:
-        # Done by Codex. Keep the compiler wrapper's command line short and preserve Windows paths and macro quotes.
+        # Keep the compiler wrapper's command line short and preserve Windows paths and macro quotes.
         with tempfile.TemporaryDirectory(prefix="link-", dir=OBJ) as directory:
             response = os.path.join(directory, "host.rsp")
             with open(response, "w", encoding="utf-8", newline="\n") as f:
@@ -291,7 +291,7 @@ def main(argv):
     if r.returncode: return r.returncode
     def beside(src):   # SDL copied next to the binary, replaced whole: a game still running keeps the file it loaded
         dst = os.path.join(os.path.dirname(OUT), os.path.basename(src))
-        # Done by Codex. Windows can have the installed DLL mapped while a second host is built.
+        # Windows can have the installed DLL mapped while a second host is built.
         if os.path.isfile(dst) and filecmp.cmp(src, dst, shallow=False):
             return
         tmp = dst + f".new{os.getpid()}"

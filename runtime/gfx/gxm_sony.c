@@ -78,7 +78,7 @@ static GfxTexture texture_words(uint32_t w0, uint32_t w1, uint32_t w2, uint32_t 
 	GfxTexture g = {0};
 	g.data = w2 & ~3u;
 	g.format = (w0 & 0x80000000u) | (w1 & 0x1f000000u) | ((w3 >> 16) & 0x7000u) | (srgb_on() ? ((w0 >> 27) & 3u) << 16 : 0);   /* + the gamma mode (gfx.h GFX_TEX_GAMMA), opt-in */
-	/* Done by Codex. Texture word 3 stores the palette in 64-byte units. */
+	/* Texture word 3 stores the palette in 64-byte units. */
 	if ((g.format & 0xff000000u) == GFX_TEX_P8) {
 		uint32_t palette = w3 << 6;
 		if (palette && mapped(palette, GFX_TEX_P8_PALETTE_BYTES)) g.palette = palette;
@@ -348,7 +348,7 @@ static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t in
 	d.nattr = (int)RD32(vp + 0x5c); if (d.nattr > 16) d.nattr = 16;
 	memcpy(d.attr, G(RD32(vp + 0x58)), 8 * d.nattr);
 	d.nstream = (int)RD32(vp + 0x64); if (d.nstream > 16) d.nstream = 16;
-	/* Done by Codex. Each emitted draw represents one instance, including a single billboard.
+	/* Each emitted draw represents one instance, including a single billboard.
 	 * Its instance attributes are constant across vertices; o_draw_instanced advances the base between instances. */
 	uint32_t stream_info = RD32(vp + 0x60);
 	int legacy = env_flag("RECOMP_GXM_ONE_INSTANCE", &legacy_instance_fetch);

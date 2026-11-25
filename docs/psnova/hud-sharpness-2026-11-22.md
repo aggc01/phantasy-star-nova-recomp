@@ -1,6 +1,5 @@
 # Nova HUD sharpness, 2026-11-22
 
-Done by Codex.
 
 ## What the capture shows
 

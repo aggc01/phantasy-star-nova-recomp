@@ -1062,7 +1062,7 @@ static uint32_t u8_pack4(const float v[4]) {
 static float cop_eval(int op, float x, float y) { switch (op) { case 0: return x + y; case 1: return x - y; case 2: return x < y ? x : y; default: return x > y ? x : y; } }
 static void exec_sop2(Ctx *cx, const UOp *op) {
 	static const int unit[4] = {1, 1, 1, 1};
-	/* Done by Codex. SOP2 reads and writes whole packed RGBA words. */
+	/* SOP2 reads and writes whole packed RGBA words. */
 	UOperand src1 = op->s1, src2 = op->s2, dst = op->dst;
 	src1.type = src2.type = dst.type = TY_U32;
 	src1.negabs = 0;   /* SOP2 applies this as a per-channel complement below. */

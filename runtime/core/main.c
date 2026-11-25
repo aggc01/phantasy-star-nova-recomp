@@ -205,7 +205,7 @@ static int host_preferred(const char *n) {
 	 * environment: the host keeps them -- its own sign-in tickets (np.c) and the retail "np" (np_common's own is set by a
 	 * shell service that isn't there, "rc" without it) */
 	if (!strncmp(n, "sceNpAuth", 9) || !strcmp(n, "sceNpCommonGetNpEnviroment")) return 1;
-	/* Done by Codex. The firmware save probe uses the existing handlers for
+	/* The firmware save probe uses the existing handlers for
 	 * the unrelated dialogs Nova visits on the way to the title menu. */
 	if ((!strncmp(n, "sceNpTrophySetupDialog", 22) || !strncmp(n, "sceNetCheckDialog", 17) ||
 	     !strncmp(n, "sceMsgDialog", 12) || !strncmp(n, "SceCommonDialog_", 16) ||
@@ -351,7 +351,7 @@ void recomp_call_external(Cpu *c, uint32_t addr) {
 	}
 	uint32_t target; unsigned fl;
 	HleFn fn = hle_resolve(addr, name, &target, &fl);
-	/* Done by Codex. The optional list probe isolates a first native open from
+	/* The optional list probe isolates a first native open from
 	 * the boot-time save dialog, while keeping each session on one backend. */
 	if (target && !strncmp(name, "sceSaveDataDialog", sizeof "sceSaveDataDialog" - 1) &&
 	    getenv("RECOMP_FIRMWARE_SAVE_LIST_ONLY") && export_addr("__recomp_start_libcdlg_main")) {

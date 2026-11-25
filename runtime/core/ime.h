@@ -1,5 +1,5 @@
 #pragma once
-/* Interactive SceIme bridge. Done by Codex. */
+/* Interactive SceIme bridge. */
 #ifdef __cplusplus
 extern "C" {
 #endif

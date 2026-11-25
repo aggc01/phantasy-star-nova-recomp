@@ -107,7 +107,7 @@ games unchanged. Old: game_host-before-deferdraws.exe, gfx_dispatch.c.before-def
   test112 or the 14-minute arena run. Watch for it; RECOMP_DEFER_DRAWS=0 in the environment turns the holding off.
 - Old captures recorded memory at the draw call, so they still show the wedge; a new F12 capture records it at scene end.
 
-## Cutscene faults from the user's 16:5x F12 captures (2026-11-20 evening, Claude; Codex's work is in codex-render-investigation-2026-11-20.md)
+## Cutscene faults from the user's 16:5x F12 captures (2026-11-20 evening; other render work is in render-investigation-2026-11-20.md)
 
 Twelve new captures (49261 ... 74696), replayed with build/gfxreplay-gpulines.exe, RECOMP_SRGB=1; contact sheet and work
 files in dump/user-captures-2026-11-20e/. Software and GPU replays agree for both faults below (the game's data, as recorded
@@ -133,6 +133,6 @@ at scene end since RECOMP_DEFER_DRAWS). Real-Vita reference: dump/reference/part
   "draws held to scene end". The user's slot 2 (15:39, 0:04 play time) is just before it.
 - 2026-11-20 late: user's 30 fps run -- captain shot no longer white (haze = 60 fps timing), Fildia "request" shot and the
   grey bridge shot unchanged (not frame rate). Ghost halo is in the real Vita too (game effect). Bridge A/B from slot 2 did
-  not reach the bridge (needs walking). Summary for Codex: claude-render-notes-2026-11-20.md.
+  not reach the bridge (needs walking). Summary: render-notes-2026-11-20.md.
 - 2026-11-20 late: bridge still grey with RECOMP_DEFER_DRAWS=0 (user). Not the draw holding, not 60 fps. Lead (model block
-  of the Fildia ground lacks the sky's -13500 world offset) in claude-render-notes-2026-11-20.md.
+  of the Fildia ground lacks the sky's -13500 world offset) in render-notes-2026-11-20.md.

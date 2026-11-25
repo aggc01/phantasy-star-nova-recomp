@@ -1,4 +1,4 @@
-"""Player-facing Windows setup window. Done by Codex.
+"""Player-facing Windows setup window.
 
 Support reports, the update panel and Roll back were added alongside the original controls: Export support report and Check for
 updates sit beside the setup buttons, a failed setup offers the export, and the Updates panel shows what a newer release changes

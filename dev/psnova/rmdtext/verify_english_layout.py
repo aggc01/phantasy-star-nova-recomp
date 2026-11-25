@@ -1,4 +1,4 @@
-"""Check the English layout in a built or installed archive. Done by Codex."""
+"""Check the English layout in a built or installed archive."""
 import argparse
 from collections import Counter
 from pathlib import Path

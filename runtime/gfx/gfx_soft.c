@@ -1091,7 +1091,7 @@ static void texel_raw(const GfxTexture *t, float u, float v, float out[4]) {
 	int w = t->width ? t->width : 1, h = t->height ? t->height : 1;
 	int x = wrap_coord((int)(u * w), w, t->u_mode), y = wrap_coord((int)(v * h), h, t->v_mode);
 	uint32_t base = t->format & 0xff000000u, at = t->data;
-	if (base == 0x0c000000u || base == GFX_TEX_P8) {   /* Done by Codex. Apply the same component swizzle to RGBA and palette entries. */
+	if (base == 0x0c000000u || base == GFX_TEX_P8) {   /* Apply the same component swizzle to RGBA and palette entries. */
 		uint32_t index = texel_index(t, x, y);
 		uint32_t p = base == GFX_TEX_P8
 			? (t->palette ? RD32(t->palette + 4u * RD8(at + index)) : 0)

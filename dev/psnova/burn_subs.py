@@ -6,9 +6,9 @@ usage: python burn_subs.py <source.mp4> <subs.json> [<lines.npz>] <out.mp4> --la
   table (dump/psnova-l10n/movies_v3_check/lines_<movie>.npz: cs/ce = frames of the line at full strength, a/b = with its
   fades, masks = where the Japanese text was).
 - For authored timings, omit lines.npz and give each cue start/end in movie seconds.
-  Authored English line breaks are preserved. Done by Codex.
+  Authored English line breaks are preserved.
 - Each subtitle gets a soft dark strip (rounded, 58 % black) centered on the text. The translated text and the
-  detected Japanese line set its minimum width. Done by Codex.
+  detected Japanese line set its minimum width.
   The text is white with a dark outline. Fades: 6 frames in and out over the line's own time (a..b).
 - Text: fonts and sizes from fonts.json, with Arabic shaping from arabic.py.
   Captions are centred and use up to two lines. Empty translations draw nothing.
@@ -43,7 +43,7 @@ def lang_font(lang, size=None):
         return ImageFont.truetype(FONTS[lang], size, layout_engine=ImageFont.LAYOUT_BASIC)
 
 
-# Done by Codex: fit English words using a smaller font, never a stretched bitmap.
+# Fit English words using a smaller font, never a stretched bitmap.
 def fit_english(text, width, keep_breaks=False):
     words = text.split()
     if not words:
@@ -80,7 +80,7 @@ def render(text, lang, font, mask_x0, mask_x1, W, H, y_mid, keep_breaks=False):
     line_size = font.size
     lh = line_size + 6
     total_h = lh * len(lines)
-    # Done by Codex. The detected original subtitle supplies a minimum
+    # The detected original subtitle supplies a minimum
     # width. Center the backing on the translated text.
     half_width = max(max(widths), mask_x1 - mask_x0) / 2 + 30
     x0, x1 = W / 2 - half_width, W / 2 + half_width
@@ -96,7 +96,7 @@ def render(text, lang, font, mask_x0, mask_x1, W, H, y_mid, keep_breaks=False):
     return strip, txt              # the strip's alpha (darkened more over bright frames, main()) and the text layer
 
 
-# Done by Codex. Cues without a detection table use artist-authored movie seconds.
+# Cues without a detection table use artist-authored movie seconds.
 def authored_spans(cues, fps, frame_count, width):
     previous_end = 0
     for i, cue in enumerate(cues):

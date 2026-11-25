@@ -1,6 +1,5 @@
 # Nova save picker and character-name input
 
-Done by Codex, 21 November 2026.
 
 ## Save picker
 
@@ -26,4 +25,4 @@ Screenshots of the picker, the on-screen keyboard and the game's registration pr
 
 ## Build
 
-The normal Nova launcher uses the installed `game_host.exe`. Before replacing it, Codex kept the previous executable as `game_host.before-codex-dialogs.exe` beside it. The installed executable's SHA-256 is `0f27c260f49a8767af14f7131e3e866a29507ca445d0b44ec513b26c57acbfbd`. The Windows build now detects an identical SDL DLL before copying so an already-mapped copy can be reused.
+The normal Nova launcher uses the installed `game_host.exe`. Before it was replaced, the previous executable was kept as `game_host.before-codex-dialogs.exe` beside it. The installed executable's SHA-256 is `0f27c260f49a8767af14f7131e3e866a29507ca445d0b44ec513b26c57acbfbd`. The Windows build now detects an identical SDL DLL before copying so an already-mapped copy can be reused.

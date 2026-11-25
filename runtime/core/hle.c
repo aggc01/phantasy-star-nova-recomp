@@ -21,7 +21,7 @@ static HleFn find_in(const HleEntry *const *mods, size_t n, const char *name) {
 }
 HleFn hle_find(const char *name) {
 	HleFn f = find_in(modules, sizeof modules / sizeof *modules, name);
-	/* Done by Codex. Deferred firmware modules are available only in probe images. */
+	/* Deferred firmware modules are available only in probe images. */
 	extern HleFn dialog_firmware_import(const char *);
 	if (!f) f = dialog_firmware_import(name);
 	if (!f && net_online()) f = find_in(online_modules, sizeof online_modules / sizeof *online_modules, name);

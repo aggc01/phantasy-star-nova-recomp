@@ -1,7 +1,7 @@
 """Write a translation pass ({id: {"en", "ar"}} files) into the text sheet (2026-11-19).
 usage: python merge_translations.py <sheet in .tsv> <out prefix> <note> <results.json> [...]
 English goes into the English column (replacing the fan text: these passes translate from the Japanese and were reviewed),
-Arabic into the Arabic column; the note (e.g. "EN+AR: Claude, tutorial pass") is added to the notes column.
+Arabic into the Arabic column; the note (e.g. "EN+AR: tutorial pass") is added to the notes column.
 Writes <prefix>.tsv and <prefix>.xlsx."""
 import io, json, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))

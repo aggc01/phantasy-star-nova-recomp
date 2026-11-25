@@ -1,23 +1,23 @@
-# Phantasy Star Nova recomp: start here
+# Phantasy Star Nova Recomp: start here
 
-This folder is its own git repository (branch `psnova`; since 2026-11-19, before that a worktree of the Project Nativ
-checkout in `..\recent recomps\Uncharted Golden Abyss Recomp`: [separation-from-uncharted.md](docs/psnova/separation-from-uncharted.md)).
-It turns the PS Vita game **Phantasy Star Nova** (PCSG00351, Japan, update 1.05) into a native Windows program, with this
-project's own English and Arabic overlays on the Japanese game.
+This repository turns the PS Vita game **Phantasy Star Nova** (PCSG00351, Japan, update 1.05) into a native Windows
+program. It is a fork of [Project Nativ](https://github.com/TheLostPantheon/nativ).
 
-- **The one state file:** [docs/psnova/README.md](docs/psnova/README.md): what works, what is open, how to build, run
-  and test, and every claim's strength (proven / single run / untested). Update it in place; don't start new status files.
-- **Play:** `Play Phantasy Star Nova.bat`. **Build:** `bash dev/psn_build_all.sh`.
-- **Project Nativ's own guides** (how the recompiler and runtime work): [README.md](README.md),
+- **Set up, build and play:** [README.md](README.md).
+- **The state of the recomp:** [docs/psnova/README.md](docs/psnova/README.md): what works, what is open, how to build,
+  run and test, and how strongly each claim is proven (proven / single run / untested). Update it in place rather than
+  starting new status files.
+- **Play:** `Play Phantasy Star Nova.bat`. **Rebuild:** `bash dev/psn_build_all.sh`.
+- **How the recompiler and runtime work:** [docs/architecture.md](docs/architecture.md),
   [docs/developers.md](docs/developers.md), [docs/debugging.md](docs/debugging.md).
-- **Lessons from the earlier recomps**, applied here from day one: `..\recomp_study\RETROSPECTIVE.md` and
-  `..\recomp_study\RECOMP_PLAYBOOK.md`.
 
-Rules for this copy:
+Working rules:
 
-- Everything it needs is inside this folder: its own library (`dump/`), branch, builds, Python (`tools\python` +
-  `.venv`) and toolchain (`toolchain\`). Nothing is read from or written to the Uncharted copies.
-- The player's game files in `F:\RECOMP GAMES\Phantasy Star Nova (v1.05)` are read only.
-- Saves live in `dump/decrypted/PCSG00351/recomp/fs/`; back them up fresh before any test run that could write them
-  (the F10 menu's Saves page keeps copies: [save-backups.md](docs/psnova/save-backups.md)).
-- The repository stores LF line endings (`core.autocrlf false`); write files with `newline='\n'`. The `.bat` files are CRLF.
+- Everything a build needs stays inside this folder: the game library (`dump/`), builds, Python (`.venv`) and
+  toolchain (`toolchain/`). All four are git-ignored.
+- Treat your own game files as read only. The pipeline copies what it needs into `dump/`.
+- Saves live in `dump/decrypted/PCSG00351/recomp/fs/`. Back them up before any test run that could write them; the
+  F10 menu's Saves page keeps copies ([save-backups.md](docs/psnova/save-backups.md)).
+- The repository stores LF line endings (`core.autocrlf false`); write files with `newline='\n'`. The `.bat` files
+  are CRLF.
+- Never commit personal paths (`C:\Users\<name>\…`) or personal email addresses.

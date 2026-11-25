@@ -1,6 +1,5 @@
 # Nova frame-rate investigation
 
-Done by Codex, 22 November 2026.
 
 ## What the player's run recorded
 
@@ -21,7 +20,7 @@ The hitch counter's `gpu` field measures host renderer time. This log has no GPU
 
 ## Reproduction tests
 
-Codex ran the installed `game_host.exe` in a window against copied saves. The runs kept the real clock, the 60 FPS setting, and the pack's graphics defaults. Both runs confirmed the requested slot loaded. The second run copied the player's updated Lv7 save and used scripted walking and camera inputs at the base. The scripts checked live save hashes and restored the reusable fixture.
+The installed `game_host.exe` was run in a window against copied saves. The runs kept the real clock, the 60 FPS setting, and the pack's graphics defaults. Both runs confirmed the requested slot loaded. The second run copied the player's updated Lv7 save and used scripted walking and camera inputs at the base. The scripts checked live save hashes and restored the reusable fixture.
 
 | Test and interval | Scale | Game FPS |
 | --- | ---: | ---: |
@@ -40,6 +39,6 @@ The preserved log confirms the sustained drop. It did not recur in either fresh 
 
 ## Measurements enabled for normal play
 
-Done by Codex. Nova's normal launcher now sends the existing measurements to `session.log`. `gpu fence` reports once a second and records estimated GPU busy time, present submit-to-completion latency and frames in flight. `waits` reports every 120 presented frames and records per-thread CPU time, kernel blocking, sleeps, renderer-lock contention and wake latency. `metrics` adds one-second frame and present timing, and `psn clock` records the game's 60 FPS target and vblanks every 300 frames. Per-frame present and fence traces remain opt-in to keep long session logs manageable. The diagnostic GPU fences add queue submissions and a polling thread.
+Nova's normal launcher now sends the existing measurements to `session.log`. `gpu fence` reports once a second and records estimated GPU busy time, present submit-to-completion latency and frames in flight. `waits` reports every 120 presented frames and records per-thread CPU time, kernel blocking, sleeps, renderer-lock contention and wake latency. `metrics` adds one-second frame and present timing, and `psn clock` records the game's 60 FPS target and vblanks every 300 frames. Per-frame present and fence traces remain opt-in to keep long session logs manageable. The diagnostic GPU fences add queue submissions and a polling thread.
 
 The ordinary windowed launch path was verified with the installed executable and isolated saves and preferences. The test logged all four streams and preserved both save trees. Explicit values for the GPU fence and wait settings override the defaults. The existing executable, graphics options and save files do not need a rebuild or migration. [Launcher verification log](../../dump/codex-fps-20261122/launcher-check/session.log)

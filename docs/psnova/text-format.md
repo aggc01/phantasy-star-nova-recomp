@@ -97,7 +97,7 @@ Layout rules found from all 46,591 files (game + fan):
 Proofs: rebuilding every Japanese file from its parts gives byte-identical files (apart from those leftovers) with the
 same font pixels; every sheet cell (25,483 Japanese, 20,055 English) encodes and decodes back to the same text; the
 archive builder's no-change rebuild of the update archive reads back entry for entry (and keeps Sega's shared data).
-A code review (workflow psnova-encoder-review, 30 agents; dump/psnova-l10n/build/encoder_review.json) confirmed 24
+A code review (workflow psnova-encoder-review, 30 passes; dump/psnova-l10n/build/encoder_review.json) confirmed 24
 problems in the first version; all fixed (atlas packing limits, control codes inside Arabic lines, bidi neutrals and
 brackets, hamza joining, extra letters پ چ گ ڤ ک ی ٱ, tag checks, text height with furigana, same-path guard).
 

@@ -227,7 +227,7 @@ class Fn:
             e = f"{self.r(ops[3].reg, i)} {'+' if mn == 'mla' else '-'} {self.r(ops[1].reg, i)} * {self.r(ops[2].reg, i)}"
             out = [f"{self.dst(ops[0].reg)} = {e};"]
         elif mn == "smmul":
-            # Done by Codex. The firmware font rasterizer uses the high word of a signed product.
+            # The firmware font rasterizer uses the high word of a signed product.
             a, b = self.r(ops[1].reg, i), self.r(ops[2].reg, i)
             out = [f"{self.dst(ops[0].reg)} = (uint32_t)((uint64_t)((int64_t)(int32_t){a} * (int32_t){b}) >> 32);"]
         elif mn in ("umull", "smull", "umlal", "smlal"):
@@ -602,7 +602,7 @@ class Fn:
             return ["{ " + " ".join(f"uint64_t t{k} = c->vfp.d[{an + k}] {op} c->vfp.d[{bn + k}];" for k in range(cnt)) + " " + " ".join(f"c->vfp.d[{dn + k}] = t{k};" for k in range(cnt)) + " }"]
         if (mn == "vshl" and dt in ("s64", "u64") and len(ops) == 3
                 and all(r and r[0] == regs[0][0] for r in regs)):
-            # Done by Codex. Variable shifts use the signed low byte of each
+            # Variable shifts use the signed low byte of each
             # shift lane. Read both inputs before writing an aliased vector.
             (dest, count), (src, _), (shift, _) = map(dbytes, regs)
             right = ("(uint64_t)((int64_t)values[lane] >> (amount < -63 ? 63 : -amount))"
@@ -655,7 +655,7 @@ class Fn:
         if (mn == "vshll" and dt in ("u8", "s8", "i8", "u16", "s16", "i16", "u32", "s32", "i32")
                 and len(ops) == 3 and ops[2].type == ARM_OP_IMM
                 and regs[0][0] == "q" and regs[1][0] == "d"):
-            # Done by Codex. PAF widens each lane before shifting. Stage the
+            # PAF widens each lane before shifting. Stage the
             # input lanes first because the destination can alias the source.
             bits, shift = int(dt[1:]), ops[2].imm
             lanes = 64 // bits
@@ -675,7 +675,7 @@ class Fn:
                        ("s", 2): ("int16_t", "int32_t"), ("u", 4): ("uint32_t", "uint64_t"), ("s", 4): ("int32_t", "int64_t")}[(dt[0], es)]
             q0, a, b = 2 * regs[0][1], regs[1][1], regs[2][1]
             if mn != "vmull":
-                # Done by Codex. Widening accumulation wraps to the result lane width.
+                # Widening accumulation wraps to the result lane width.
                 lanes = 8 // es
                 accum_type = f"uint{es * 16}_t"
                 sign = "+=" if mn == "vmlal" else "-="
@@ -707,7 +707,7 @@ class Fn:
                     f" memcpy(&c->vfp.d[{dn}], o, {8 * cnt}); }}"]
         if (mn == "vpadal" and dt in ("u8", "u16", "u32", "s8", "s16", "s32")
                 and len(regs) == 2 and regs[1] and regs[0][0] == regs[1][0]):
-            # Done by Codex. Add adjacent widened lanes to the existing wide accumulator.
+            # Add adjacent widened lanes to the existing wide accumulator.
             (dest, count), (src, _) = map(dbytes, regs)
             bits = int(dt[1:])
             lanes = count * 64 // bits
@@ -721,7 +721,7 @@ class Fn:
                     f" memcpy(&c->vfp.d[{dest}], out, {count * 8}); }}"]
         if (mn in ("vabd", "vabdl") and dt in ("s8", "s16", "s32", "u8", "u16", "u32")
                 and len(regs) == 3 and all(reg and reg[0] in ("d", "q") for reg in regs)):
-            # Done by Codex. PAF's PNG filter compares absolute byte differences in wide lanes.
+            # PAF's PNG filter compares absolute byte differences in wide lanes.
             (dest, out_count), (left, in_count), (right, right_count) = map(dbytes, regs)
             widen = 2 if mn == "vabdl" else 1
             if out_count == in_count * widen and in_count == right_count:
@@ -1031,7 +1031,7 @@ class Fn:
             return ["".join(out)]
         if ((mn == "vmov" or (mn in ("vorr", "vbic", "vmvn") and dt in ("i16", "i32")))
                 and len(ops) == 2 and regs[0] and regs[0][0] in "dq" and ops[1].type == ARM_OP_IMM):
-            # Done by Codex. The immediate is replicated for logical operations too.
+            # The immediate is replicated for logical operations too.
             bits = int(dt[1:]) if dt[1:].isdigit() else 32
             if bits < 64:
                 lane = ops[1].imm & ((1 << bits) - 1)

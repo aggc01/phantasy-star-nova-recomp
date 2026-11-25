@@ -88,7 +88,7 @@ class Rmd:
         self.n = f[5]
         self.recs = [struct.unpack_from('<BBH4f', b, gs + 20 * i) for i in range(self.n)]
         self.W, self.H = f[16], f[17]
-        # Done by Codex. In a 2x atlas the RMD keeps the original layout
+        # In a 2x atlas the RMD keeps the original layout
         # dimensions. The GXM chunk describes the physical pixels.
         self.atlas_width, self.atlas_height = self.W, self.H
         if self.hs + 0x1e0 <= len(b):

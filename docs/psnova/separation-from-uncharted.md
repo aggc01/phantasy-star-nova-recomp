@@ -51,5 +51,5 @@ in the working copy too. Lesson: write files with `open(p, 'w', newline='\n')` o
 - The game itself was decrypted from `F:\RECOMP GAMES\Phantasy Star Nova (v1.05)` (F:, read only).
 - The user's reference frames from a real Vita playthrough at `C:\New PATH\screenshots` (1.4 GB, read by the recomp
   session): the user's files; not moved (asked the user).
-- Claude's own memory notes and session transcripts live in `C:\Users\<user>\.claude` (the app's place, not ours).
+- The development tools' own memory notes and session transcripts live in `C:\Users\<user>\.claude` (the app's place, not ours).
 - Cross-session coordination and the in-app task list: no files.

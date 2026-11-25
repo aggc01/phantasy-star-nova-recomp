@@ -1,6 +1,6 @@
 """Center the two field-dialogue name casts in the English ui_field.crbpj.
 
-Done by Codex. Pass the original 1.05 project and output file. Appends user
+Pass the original 1.05 project and output file. Appends user
 parameter blocks so the existing Priority=60 is retained. CRI must be tested
 in game after changing a project; the version and records are checked here.
 """

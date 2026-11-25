@@ -99,7 +99,7 @@ const char *host_path_s(const char *p, char *buf, size_t n) {
 	const char *colon = strchr(p, ':'), *slash = strchr(p, '/');
 	const char *device_end = colon && (!slash || colon < slash) ? colon : slash;
 	size_t device_length = device_end ? (size_t)(device_end - p) : strlen(p);
-	/* Done by Codex. Keep guest saves outside the replaceable install generation. */
+	/* Keep guest saves outside the replaceable install generation. */
 	if (device_length == 9 && !strncasecmp(p, "savedata0", device_length))
 		root = player_save_root();
 	if (device_end && device_end == colon) {
@@ -135,7 +135,7 @@ static uint32_t sce_err(int e) {
  * exist yet its folder, resolves under <RECOMP_FS>/app0 -- links and ".." included. */
 /* (The prefixes are resolved once, together: app0, fs/lang, and the active language's own folder -- on macOS/Linux each
  * fs/lang/<code> is a symlink into the dump, so its files resolve outside fs/lang.) */
-/* Done by Codex. The firmware probe mounts system resources at vs0 and sa0. */
+/* The firmware probe mounts system resources at vs0 and sa0. */
 static char ro_pre[5][PATH_MAX]; static int ro_have[5];
 static pthread_once_t ro_once = PTHREAD_ONCE_INIT;
 static void ro_init(void) {

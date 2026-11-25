@@ -1,4 +1,4 @@
-/* Done by Codex. The portable player directory survives updates to game assets. */
+/* The portable player directory survives updates to game assets. */
 #ifndef NOVA_PLAYER_PATHS_H
 #define NOVA_PLAYER_PATHS_H
 

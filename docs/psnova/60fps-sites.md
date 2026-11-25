@@ -4,7 +4,7 @@ Raw findings from the workflow psnova-60fps-sites (read-only code reading, nothi
 
 ## pacing
 
-**Summary.** I re-checked every finding against the generated C (game_part12/35/47/49/50/51.c). I also read the ELF (vtable and data defaults) and runtime/gfx/display.c and runtime/core/hooks.c. Nothing in the project was changed. My helper scripts are in C:\Users\<user>\AppData\Local\Temp\claude\8b2a8b50cdc8633b\4d4bfe9e-6230-4b81-bd52-4ea994cc18b1\scratchpad\recheck.
+**Summary.** I re-checked every finding against the generated C (game_part12/35/47/49/50/51.c). I also read the ELF (vtable and data defaults) and runtime/gfx/display.c and runtime/core/hooks.c. Nothing in the project was changed.
 
 The pacing core holds:
 - The VSync thread counts vblanks.

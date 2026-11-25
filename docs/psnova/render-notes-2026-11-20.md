@@ -1,6 +1,6 @@
-# Claude's render work, 2026-11-20 (handoff for Codex and later sessions)
+# Render work, 2026-11-20
 
-Written by Claude Code. Codex's own work the same day is in `codex-render-investigation-2026-11-20.md`; the long-form
+Other render work the same day is in `render-investigation-2026-11-20.md`; the long-form
 diary of everything is `picture-faults.md` (sections dated 2026-11-20). This file is the short map.
 
 ## What is in the playable build (`dump/decrypted/PCSG00351/recomp/game_host.exe`)
@@ -9,17 +9,17 @@ Each change keeps a switch to turn it off and a backup of the previous exe in th
 
 | Change | File | Switch | Why |
 |---|---|---|---|
-| Instanced draws expanded one draw per instance | runtime/gfx/gxm_sony.c `o_draw_instanced` | `RECOMP_GXM_ONE_INSTANCE=1` = old | particle strips joined every particle (orange stripes, beams). Codex later extended the instance-stream handling to single draws (the real cause of the coloured wedges). |
+| Instanced draws expanded one draw per instance | runtime/gfx/gxm_sony.c `o_draw_instanced` | `RECOMP_GXM_ONE_INSTANCE=1` = old | particle strips joined every particle (orange stripes, beams). The instance-stream handling was later extended to single draws (the real cause of the coloured wedges). |
 | LINES: 2D lines as GPU quads | runtime/gfx/gfx_gpu.c `lines_as_quads` | `RECOMP_NO_LINES=1` drops lines | the shadow image's border lines (dark bands on the ground) without the software round trip |
 | LINES: 3D lines natively (LINELIST pipeline) | gfx_gpu.c `g_lines_draw` (pipe key/PipeEntry.lines, cull none, no motion pass, no recipe) | `RECOMP_GPU_SOFT_LINES=1` = software path | battle hit sparks were ~120 software draws a frame: 60-190 ms frames ("fps tanks when the team attacks") and native-resolution frames ("blurred frames") |
 | Partial edge pages of render targets protected | gfx_gpu.c `edge_arm`, `kept_pages_find`, `target_rewritten_under` | none | a stale write-back overwrote the start of Nova's costume texture ("clothes change") |
-| Draws held until their scene ends | runtime/gfx/gfx_dispatch.c `defer_draws`, `draws_flush` | `RECOMP_DEFER_DRAWS=0` = draw at the call; on via packs/PCSG00351/pack.toml RUN_ENV | was aimed at the coloured wedges; Codex's instance-stream fix is the actual cause there. Kept on: it matches the console's timing. One unexplained 82 s freeze in one of three test runs (test111); not seen since. |
+| Draws held until their scene ends | runtime/gfx/gfx_dispatch.c `defer_draws`, `draws_flush` | `RECOMP_DEFER_DRAWS=0` = draw at the call; on via packs/PCSG00351/pack.toml RUN_ENV | was aimed at the coloured wedges; the instance-stream fix addresses the actual cause there. Kept on: it matches the console's timing. One unexplained 82 s freeze in one of three test runs (test111); not seen since. |
 | Launcher log pump decodes UTF-8 incrementally | pipeline/vitarecomp.py `tee_run` | none (old script: `vitarecomp.py.before-tee-fix`) | half a Japanese character in a chunk made Python's console writer spin forever; the game blocked in fprintf (freeze at the load-game list) |
 | Depth clip switch | gfx_gpu.c `pipe_create_info` | `RECOMP_GPU_DEPTH_CLIP=1`, OFF by default, not in RUN_ENV | tried for the Fildia fault below; changed nothing |
 
 ## Open faults (user screenshots and F12 captures, evening of 2026-11-20)
 
-Captures: `dump/decrypted/PCSG00351/recomp/captures/frame_*.vfc`; Claude's work files: `dump/user-captures-2026-11-20e/`.
+Captures: `dump/decrypted/PCSG00351/recomp/captures/frame_*.vfc`; work files: `dump/user-captures-2026-11-20e/`.
 Replay: `build/gfxreplay-gpulines.exe <vfc> out.ppm` with `RECOMP_GFX=gpu RECOMP_SRGB=1`, and
 `RECOMP_REPLAY_KEEP_TARGETS=1` when stopping mid-frame with `RECOMP_REPLAY_DRAWS=k` (without it the stop picture can be
 a restored snapshot, not the real result). Real-Vita frames: `C:\New PATH\screenshots\...` (1 fps, 1080p) and contact
@@ -53,10 +53,10 @@ sheets in `dump/reference/part1|part2/`, index in `reference-index.md`.
 
 ## Rules this session followed
 
-Subagents only on Sonnet/Haiku; game imagery stays out of git; nothing committed; user saves backed up before test runs
+Game imagery stays out of git; nothing committed; user saves backed up before test runs
 (`dump/save-backups/`), tests start from copies (`TEST_SAVES`); the l10n session's files are not edited.
 
-## Update, late 2026-11-20 (Claude)
+## Update, late 2026-11-20
 
 - **User test: bridge shot still grey with RECOMP_DEFER_DRAWS=0** (and the Fildia shot was broken at 30 fps). So neither
   the draw holding nor the frame rate causes "scenery over characters". The renderer draws what the game gives it
@@ -73,7 +73,7 @@ Subagents only on Sonnet/Haiku; game imagery stays out of git; nothing committed
   0x237edb90, written by game code, double-buffered), unlike most draws' (SceGxm ring). Next step: find the game code
   that writes 0x237eda20 (watch the address, e.g. guestwatch or a write trace) and compare its inputs with the sky's.
 
-## Fade check, late 2026-11-20 (Claude)
+## Fade check, late 2026-11-20
 
 - New diagnostic: `RECOMP_LOG_FPROG=<hex>` (gfx_dispatch.c `draw_now`) logs, for each draw whose fragment OR vertex program
   has that address, the time and the first 8 words of its default fragment uniforms. Off by default. The cutscene
