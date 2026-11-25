@@ -16,6 +16,7 @@
  * The menu pauses the game while it's up, so the game isn't writing its save while a backup or restore copies it.
  */
 #include "save_backups.h"
+#include "player_paths.h"
 #include <dirent.h>
 #include <errno.h>
 #include <stdint.h>
@@ -26,9 +27,12 @@
 #include <time.h>
 #include <unistd.h>
 
-static const char *fs_root(void) { const char *e = getenv("RECOMP_FS"); return e && *e ? e : "fs"; }
-void save_backups_dir(char *buf, size_t n) { snprintf(buf, n, "%s/../save_backups", fs_root()); }
-static void save_dir(char *buf, size_t n) { snprintf(buf, n, "%s/savedata0", fs_root()); }
+/* Done by Codex. Store backups beside the portable saves when configured. */
+void save_backups_dir(char *buf, size_t n) {
+	const char *root = player_save_override();
+	snprintf(buf, n, root ? "%s/save_backups" : "%s/../save_backups", player_save_root());
+}
+static void save_dir(char *buf, size_t n) { snprintf(buf, n, "%s/savedata0", player_save_root()); }
 
 static int is_dir(const char *p) { struct stat st; return stat(p, &st) == 0 && S_ISDIR(st.st_mode); }
 static int make_dir(const char *p) { return mkdir(p, 0755) == 0 || errno == EEXIST ? 0 : -1; }

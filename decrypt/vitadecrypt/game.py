@@ -162,7 +162,9 @@ def convert_game(
 
     try:
         if source == "pkg":
-            cleanup_dir = tempfile.mkdtemp(prefix="vitadecrypt_pkg_")
+            # (beside out_dir, so the PKG's outer layer, gigabytes of it, lands on the same drive as the result and not in
+            # the system temp folder; a leftover from an interrupted run is the ".add*" folder the caller already clears)
+            cleanup_dir = tempfile.mkdtemp(prefix=".add-pkg-", dir=os.path.dirname(os.path.abspath(out_dir)))
             pkg_info = PKG.extract_pkg(input_path, cleanup_dir, rif_path=license_path)
             content_id_from_pkg = pkg_info.content_id
             if klicensee is None:

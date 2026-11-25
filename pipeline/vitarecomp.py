@@ -264,7 +264,11 @@ def cmd_add(T, rest):
         kept = k.stdout.strip() if k.returncode == 0 else ""
         if kept: args += ["--license", kept]; say(f"{tid}: its licence, kept ({cid})")
         elif kind == "update" and os.path.isfile(os.path.join(W, "license.rif")): args += ["--license", os.path.join(W, "license.rif")]
-        elif kind == "update": die(f"{tid}: add the game itself first -- its update decrypts with the game's licence")
+        # Done by Codex. A plain update with its own ELF does not need the base game's licence.
+        elif kind == "update" and (not os.path.isdir(T) or os.path.isfile(os.path.join(T, "sce_pfs", "files.db"))):
+            die(f"{tid}: this encrypted update needs the base game's licence (work.bin or .rif)")
+        elif kind == "update":
+            say(f"{tid}: importing a plain update without a licence (it must include a readable executable)")
         else: say(f"{tid}: no licence kept for it ({cid}): a copy that needs one stops below -- give its licence file (.rif or work.bin, --license), or keep yours first (vitarecomp licenses)")
     tmp = os.path.join(DUMP, "decrypted", f".add.{os.getpid()}"); rif = tmp + ".rif"
     rmtree(tmp); rmtree(rif); os.makedirs(os.path.join(DUMP, "decrypted"), exist_ok=True)
@@ -274,8 +278,14 @@ def cmd_add(T, rest):
         try: tid = json.load(open(os.path.join(tmp, "game.json")))["title_id"]
         except (OSError, ValueError, KeyError): tid = "-"
         W = os.path.join(DUMP, "decrypted", tid)
-    if not (TITLE_RE.match(tid) and (kind == "update" or os.path.isfile(os.path.join(tmp, "eboot.bin.elf")))):
-        rmtree(tmp); rmtree(rif); die(f"{T}: no title id or no decryptable eboot.bin (see above)")
+    # Done by Codex. Native ELF dumps sometimes retain the eboot.bin filename.
+    raw_eboot, converted_eboot = (os.path.join(tmp, filename) for filename in ("eboot.bin", "eboot.bin.elf"))
+    if not os.path.isfile(converted_eboot) and os.path.isfile(raw_eboot):
+        with open(raw_eboot, "rb") as f:
+            is_elf = f.read(4) == b"\x7fELF"
+        if is_elf: shutil.copyfile(raw_eboot, converted_eboot)
+    if not (TITLE_RE.match(tid) and os.path.isfile(converted_eboot)):
+        rmtree(tmp); rmtree(rif); die(f"{T}: no title id or no readable eboot.bin. Supply a matching licence for an encrypted copy (see above).")
     os.makedirs(W, exist_ok=True)
     if os.path.isfile(rif): _last_line([PY, os.path.join(R, "licenses.py"), "import", rif], env_with({"ATIV_DUMP": DUMP}))   # (the licence that decrypted it, kept)
     if kind == "game":
@@ -445,8 +455,10 @@ def cmd_import(g, src):
             if info.returncode: sys.stderr.write(info.stderr); sys.exit(info.returncode)
             pv = (info.stdout.split() + ["", "", ""])[2]
             if not g.VERSIONS or version_of(g.VERSIONS, sha256(e)):
-                run([PY, os.path.join(R, "packs.py"), "layer", os.path.join(W, "app0"), os.path.join(W, "patch0"), os.path.join(W, "app0_patched")], env=env_with(TOOLS_ENV))
-                src = os.path.join(W, "app0_patched")
+                # Done by Codex. Layer the original and update straight into the portable game filesystem.
+                # On Windows an absolute directory junction would break when the release folder moves.
+                src = os.path.join(OUT, "fs", "app0")
+                run([PY, os.path.join(R, "packs.py"), "layer", os.path.join(W, "app0"), os.path.join(W, "patch0"), src], env=env_with(TOOLS_ENV))
             else:
                 say(f"{g.T}: its update ({pv}) isn't a version packs/{g.PACK}/pack.toml plays yet -- the game runs without it")
         # a rePatch folder kept for the title (vitarecomp repatch): its plain files over the game and its update, as the
@@ -475,8 +487,9 @@ def cmd_import(g, src):
         for f in dict.fromkeys(els):
             if not os.path.isfile(f): die(f"cp: {f}: No such file or directory")
             shutil.copyfile(f, os.path.join(W, "elf", os.path.basename(f))); shutil.copymode(f, os.path.join(W, "elf", os.path.basename(f)))
-        if os.path.islink(app0) or _is_junction(app0) or not os.path.lexists(app0):   # (a link: re-pointed -- the game, or with its update)
-            link_dir(os.path.realpath(src), app0)
+        if os.path.normcase(os.path.abspath(src)) != os.path.normcase(os.path.abspath(app0)):
+            if os.path.islink(app0) or _is_junction(app0) or not os.path.lexists(app0):
+                link_dir(os.path.realpath(src), app0)
     else:
         os.makedirs(app0, exist_ok=True)
         run([PY, os.path.join(DECRYPT, "fself2elf.py"), src, os.path.join(W, "elf")])

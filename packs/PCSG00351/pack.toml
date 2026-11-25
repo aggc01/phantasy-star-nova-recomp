@@ -25,7 +25,7 @@ REPATCH = "off"
 TEST_FRAMES = 1200
 TEST_TIMEOUT = 600
 
-# 1.05, the update as installed over 1.00 (the copy in F:\RECOMP GAMES\Phantasy Star Nova (v1.05)\patch); 1.00's
+# 1.05, the update as installed over 1.00 (the official patch folder); 1.00's
 # eboot.bin.elf is f4b3a669b53cf5ac8a2ecb26b3686011011129d8db7930c88a578e1463592542 (not played).
 [versions."1.05"]
 sha256 = "abb45e179726d3021de144a900f912534fa6879061e068228cc0cd55286edcf3"
@@ -35,6 +35,6 @@ status = "recommended"
 # the movw/movt tracker doesn't follow, and stored in a Function object (the push.w at 0x81e53e76 was found). The ARM five:
 # two switch heads (uxth ...; after pop {r4, pc} / bx lr) and three bx ip thunks. Another port of the game (on 1.00) seeds
 # the 1.00 counterparts (0x81dd110c, 0x81a028a8...); these are 1.05's, checked against the bytes.
-FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm"
+FUNCTION_SEEDS = "0x81e53e70:thumb 0x81a687a0:arm 0x81a688e8:arm 0x81a698a4:arm 0x81a698b4:arm 0x81a698c4:arm 0x8209d688:arm 0x822b0d6c:thumb"  # the last two: carried over from the development analysis (release 0.1.0 Beta 1)
 HOOKS = "0x81b1c958:psn_pad_update 0x81b2a8bc:psn_tree_insert 0x81a7756c:psn_frame_rate 0x817e850e:psn_rtl_mark 0x817e882e:psn_rtl_mark"   # psn_rtl_mark: Arabic right alignment (with IHOOKS psn_rtl_align; hooks.c, docs/psnova/right-alignment-research.md). diagnostics (hooks.c): the pad device's update (RECOMP_PSN_INPUT_TRACE=1); the map insert that aborts after Start the Game. psn_frame_rate: 60 fps with the frame_rate setting (hooks.c, docs/psnova/60fps-sites.md)
 IHOOKS = "0x81a1f284:psn_input_slot 0x81905b10:psn_rtl_align"   # psn_rtl_align: a box whose message starts with 0x8095 (Arabic) aligns right. diagnostics: each device slot the input thread's loop loads

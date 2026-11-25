@@ -46,9 +46,72 @@ CONTENT_TYPE_APP = 0x15
 CONTENT_TYPE_DLC = 0x16
 CONTENT_TYPE_THEME = 0x1F
 
+CHUNK = 8 * 1024 * 1024        # extract_pkg streams each file through memory this much at a time (a multiple of 16)
+MAX_ENTRIES = 200_000
+MAX_NAME_BYTES = 1024
+WINDOWS_MAX_PATH = 259
+LICENSE_NAME = "sce_sys/package/work.bin"
+_RESERVED_NAMES = frozenset({"CON", "PRN", "AUX", "NUL"} | {f"{p}{i}" for p in ("COM", "LPT") for i in range(1, 10)})
+_FORBIDDEN_CHARS = frozenset('<>:"|?*\\') | frozenset(chr(i) for i in range(32))
+
 
 class PkgError(ValueError):
     pass
+
+
+def unsafe_name_reason(name: str) -> str | None:
+    """Why `name` (a '/'-separated path from a PKG's file table) must not become a file on Windows, or None if it is
+    fine: an absolute or drive path, '.' or '..' parts, a character or device name Windows does not allow, a
+    trailing dot or space."""
+    if not name:
+        return "it is empty"
+    if name.startswith("/"):
+        return "it is an absolute path"
+    parts = name.split("/")
+    if parts[-1] == "":
+        parts.pop()          # (a directory entry written with a trailing slash)
+    for part in parts:
+        if part in ("", ".", ".."):
+            return "it has an empty, '.' or '..' part"
+        bad = next((c for c in part if c in _FORBIDDEN_CHARS), None)
+        if bad is not None:
+            return "it has the character %r, which Windows file names cannot contain (or it is a drive or stream path)" % bad
+        if part.endswith((" ", ".")):
+            return "a part ends with a space or a dot"
+        if part.split(".")[0].rstrip(" ").upper() in _RESERVED_NAMES:
+            return f"{part!r} is a reserved Windows device name"
+        if len(part) > 255:
+            return "a part is longer than 255 characters"
+    return None
+
+
+@dataclasses.dataclass
+class PkgEntry:
+    name: str
+    offset: int      # of the contents, from the start of the encrypted data region
+    size: int
+    is_dir: bool
+
+
+@dataclasses.dataclass
+class PkgView:
+    """A PKG's identity and its checked file table: what a hub or setup shows before anything is extracted."""
+    info: "PkgInfo"
+    entries: list
+    params: tuple    # (main key, IV, data region offset, file table offset, file count)
+
+    def entry(self, name: str):
+        return next((e for e in self.entries if e.name == name and not e.is_dir), None)
+
+    def read_entry(self, read, name: str, limit: int = 1 << 20) -> bytes | None:
+        """A small member's decrypted bytes (a licence file), or None if the PKG has no such file."""
+        entry = self.entry(name)
+        if entry is None:
+            return None
+        if entry.size > limit:
+            raise PkgError(f"{name} is {entry.size} bytes, more than the {limit} a PKG's licence file should be")
+        main_key, iv, data_offset, _items, _count = self.params
+        return _cipher_at(main_key, iv, entry.offset).decrypt(read(data_offset + entry.offset, entry.size))
 
 
 @dataclasses.dataclass
@@ -67,6 +130,16 @@ def _ctr_decrypt(main_key: bytes, iv: bytes, offset_blocks: int, data: bytes) ->
     ctr_val = (int.from_bytes(iv, "big") + offset_blocks) & ((1 << 128) - 1)
     ctr = Counter.new(128, initial_value=ctr_val)
     return AES.new(main_key, AES.MODE_CTR, counter=ctr).decrypt(data)
+
+
+def _cipher_at(main_key: bytes, iv: bytes, offset: int):
+    """An AES-CTR keystream positioned at byte `offset` of the encrypted region, for a stream of decrypt() calls."""
+    block, lead = divmod(offset, 16)
+    ctr = Counter.new(128, initial_value=(int.from_bytes(iv, "big") + block) & ((1 << 128) - 1))
+    cipher = AES.new(main_key, AES.MODE_CTR, counter=ctr)
+    if lead:
+        cipher.decrypt(bytes(lead))
+    return cipher
 
 
 def _head(read, size: int) -> tuple[PkgInfo, tuple]:
@@ -97,6 +170,8 @@ def _head(read, size: int) -> tuple[PkgInfo, tuple]:
     # fixed 16 bytes per entry but only advances by 8 + size.
     content_type = sfo_offset = sfo_size = items_offset = 0
     off = info_offset
+    if info_count > 1024:
+        raise PkgError(f"the header lists {info_count} info blocks -- corrupted PKG")
     for _ in range(info_count):
         block = struct.unpack_from(">4I", read(off, 16), 0)
         btype, bsize = block[0], block[1]
@@ -145,45 +220,122 @@ def peek_pkg(pkg_path: str) -> PkgInfo:
     """What a PKG is (app, patch, add-on), its title and version, without a licence and without reading the gigabytes
     after its header (the hub's folder scan)."""
     with open(pkg_path, "rb") as f:
-        def read(off: int, n: int) -> bytes:
-            f.seek(off)
-            return f.read(n)
-        return _head(read, os.path.getsize(pkg_path))[0]
+        size = os.path.getsize(pkg_path)
+        return _head(_checked_reader(f, size), size)[0]
 
 
-def extract_pkg(pkg_path: str, out_dir: str, *, rif_path: str | None = None) -> PkgInfo:
+def _checked_reader(f, size: int):
+    """read(offset, n) over an open file that fails clearly, rather than returning short data, past the end."""
+    def read(offset: int, n: int) -> bytes:
+        if offset < 0 or offset + n > size:
+            raise PkgError("the file ends before its own header says it does -- truncated download?")
+        f.seek(offset)
+        data = f.read(n)
+        if len(data) != n:
+            raise PkgError("the file ended while it was being read -- truncated or still downloading?")
+        return data
+    return read
+
+
+def _entries(read, size: int, params: tuple) -> list:
+    """The file table, decrypted and checked before any file is written: every offset inside the file, every name
+    safe to create on Windows, no name twice (Windows file names ignore case), no file that is also a folder."""
+    main_key, iv, data_offset, items_offset, file_count = params
+    if file_count > MAX_ENTRIES:
+        raise PkgError(f"the header lists {file_count} files -- corrupted PKG")
+    if data_offset > size or data_offset + items_offset + file_count * _ENTRY.size > size:
+        raise PkgError("the file table runs past the end of the file -- truncated or corrupted PKG")
+    region = size - data_offset
+    table = _cipher_at(main_key, iv, items_offset).decrypt(read(data_offset + items_offset, file_count * _ENTRY.size))
+    entries, seen = [], {}
+    for i in range(file_count):
+        name_offset, name_size, f_offset, f_size, f_type, _pad = _ENTRY.unpack_from(table, i * _ENTRY.size)
+        if not 0 < name_size <= MAX_NAME_BYTES or name_offset + name_size > region:
+            raise PkgError(f"entry {i}: its name runs past the end of the file -- wrong key or corrupted PKG")
+        is_dir = (f_type & 0xFF) in ENTRY_TYPE_DIR
+        if not is_dir and f_offset + f_size > region:
+            raise PkgError(f"entry {i}: offsets run past end of file -- wrong key or corrupted PKG")
+        raw = _cipher_at(main_key, iv, name_offset).decrypt(read(data_offset + name_offset, name_size))
+        try:
+            name = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise PkgError(f"entry {i}: unreadable file name -- wrong key or corrupted PKG") from None
+        reason = unsafe_name_reason(name)
+        if reason:
+            raise PkgError(f"entry {i}: unsafe name {name!r}: {reason}")
+        name = name.rstrip("/")
+        folded = name.lower()
+        if folded in seen:
+            raise PkgError(f"entry {i}: {name!r} is listed twice (as {seen[folded].name!r}); Windows would merge them")
+        seen[folded] = PkgEntry(name, f_offset, f_size, is_dir)
+        entries.append(seen[folded])
+    for entry in entries:
+        parts = entry.name.lower().split("/")
+        for depth in range(1, len(parts)):
+            owner = seen.get("/".join(parts[:depth]))
+            if owner is not None and not owner.is_dir:
+                raise PkgError(f"{entry.name!r} is inside {owner.name!r}, which is a file")
+    return entries
+
+
+def inspect_pkg(read, size: int) -> PkgView:
+    """A PKG's identity and its checked file table, through read(offset, n); nothing is extracted. Everything it reads
+    lies near the start of the file, so a stream that can only be read forward (a ZIP member) can serve `read`."""
+    info, params = _head(read, size)
+    return PkgView(info, _entries(read, size, params), params)
+
+
+def inspect_pkg_file(pkg_path: str) -> PkgView:
+    with open(pkg_path, "rb") as f:
+        size = os.path.getsize(pkg_path)
+        return inspect_pkg(_checked_reader(f, size), size)
+
+
+def extract_pkg(pkg_path: str, out_dir: str, *, rif_path: str | None = None, progress=None) -> PkgInfo:
     """Decrypt `pkg_path` into `out_dir` (created if missing) as a flat,
     still-PFS-encrypted NoNpDrm-style tree, plus `sce_sys/package/work.bin`
     built from the given .rif licence file (optional -- without one, work.bin
     is simply not written, and pfs.py/game.py will need an explicit
-    --klicensee instead)."""
+    --klicensee instead).
+
+    The file table is checked first (offsets, Windows-safe names), then each file is decrypted CHUNK bytes at a time,
+    so a multi-gigabyte PKG needs only that much memory. progress(done, total) is called as bytes are written."""
+    size = os.path.getsize(pkg_path)
     with open(pkg_path, "rb") as f:
-        data = f.read()
-    info, (main_key, pkg_data_iv, data_offset, items_offset, file_count) = _head(lambda o, n: data[o:o + n], len(data))
+        read = _checked_reader(f, size)
+        view = inspect_pkg(read, size)
+        info = view.info
+        main_key, pkg_data_iv, data_offset, _items_offset, _count = view.params
 
-    os.makedirs(out_dir, exist_ok=True)
+        base = os.path.abspath(out_dir)
+        if os.name == "nt":
+            longest = max((e for e in view.entries), key=lambda e: len(e.name), default=None)
+            if longest and len(base) + 1 + len(longest.name) > WINDOWS_MAX_PATH:
+                raise PkgError(f"{longest.name!r} would be {len(base) + 1 + len(longest.name)} characters long under "
+                               f"{base}, over the Windows limit of {WINDOWS_MAX_PATH}. Use a shorter folder path.")
+        os.makedirs(out_dir, exist_ok=True)
 
-    entries_raw = _ctr_decrypt(main_key, pkg_data_iv, items_offset // 16, data[data_offset + items_offset: data_offset + items_offset + file_count * _ENTRY.size])
-    for i in range(file_count):
-        name_offset, name_size, f_data_offset, f_data_size, f_type, _pad = _ENTRY.unpack_from(entries_raw, i * _ENTRY.size)
-        if data_offset + name_offset + name_size > len(data) or data_offset + f_data_offset + f_data_size > len(data):
-            raise PkgError(f"entry {i}: offsets run past end of file -- wrong key or corrupted PKG")
-
-        name_ct = data[data_offset + name_offset: data_offset + name_offset + name_size]
-        name = _ctr_decrypt(main_key, pkg_data_iv, name_offset // 16, name_ct).decode("utf-8", "replace")
-        if not name or name in (".", "..") or name.startswith("/") or ".." in name.split("/"):
-            raise PkgError(f"entry {i}: unsafe/garbage name {name!r} -- wrong key?")
-
-        dest = os.path.join(out_dir, *name.split("/"))
-        if (f_type & 0xFF) in ENTRY_TYPE_DIR:
-            os.makedirs(dest, exist_ok=True)
-            continue
-
-        os.makedirs(os.path.dirname(dest), exist_ok=True)
-        file_ct = data[data_offset + f_data_offset: data_offset + f_data_offset + f_data_size]
-        plain = _ctr_decrypt(main_key, pkg_data_iv, f_data_offset // 16, file_ct)
-        with open(dest, "wb") as out:
-            out.write(plain)
+        total = sum(e.size for e in view.entries if not e.is_dir)
+        done = 0
+        for entry in view.entries:
+            dest = os.path.join(out_dir, *entry.name.split("/"))
+            if entry.is_dir:
+                os.makedirs(dest, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            cipher = _cipher_at(main_key, pkg_data_iv, entry.offset)
+            f.seek(data_offset + entry.offset)
+            left = entry.size
+            with open(dest, "wb") as out:
+                while left:
+                    chunk = f.read(min(CHUNK, left))
+                    if not chunk:
+                        raise PkgError(f"{entry.name}: the file ended inside this entry -- truncated PKG")
+                    out.write(cipher.decrypt(chunk))
+                    left -= len(chunk)
+                    done += len(chunk)
+                    if progress:
+                        progress(done, total)
 
     rif = None
     if rif_path:
@@ -229,6 +381,7 @@ def _pad16(b: bytes) -> bytes:
 
 def _build_synthetic_pkg(
     tmp_sfo: bytes, files: dict[str, bytes], *, key_type: int = 2, content_type: int = CONTENT_TYPE_APP,
+    content_id: str = "IP0177-PCSB00013_00-GOLFDS00000000",
 ) -> bytes:
     """Build a byte-exact PKG (same header/info-table/entry/AES-CTR layout as
     a real retail one) so pkg.py can be tested without a real game.
@@ -285,11 +438,10 @@ def _build_synthetic_pkg(
     data_offset_abs = sfo_offset + len(_pad16(tmp_sfo))
     total_size = data_offset_abs + region_size
 
-    content_id = b"IP0177-PCSB00013_00-GOLFDS00000000".ljust(48, b"\x00")
     header = _HEADER.pack(
         PKG_MAGIC, 1, 0, info_offset, 3, _HEADER.size, len(names),
         total_size, data_offset_abs, region_size,
-        content_id, bytes(16), pkg_data_iv, bytes(64),
+        content_id.encode("ascii").ljust(48, b"\x00"), bytes(16), pkg_data_iv, bytes(64),
     )
     ext_header = _EXT_HEADER.pack(EXT_MAGIC, 0, _EXT_HEADER.size, 0, 0, 0, 0, 0, key_type, 0, 0, 0, 0)
     return header + ext_header + info_table + _pad16(tmp_sfo) + region_enc
@@ -360,6 +512,60 @@ def _selftest() -> None:
             raise AssertionError("expected PkgError for an unknown key revision")
         except PkgError:
             pass
+
+        # streaming: a file several chunks long, a chunk size that does not divide it, and the progress callback
+        global CHUNK
+        big = bytes(range(256)) * 9 + b"tail"
+        stream_files = {"sce_sys/param.sfo": tmp_sfo, "data/big.bin": big, "empty.bin": b"", "work/lic": b"x" * 17}
+        stream_pkg = os.path.join(tmp, "stream.pkg")
+        with open(stream_pkg, "wb") as f:
+            f.write(_build_synthetic_pkg(tmp_sfo, stream_files, key_type=2))
+        saved_chunk, CHUNK = CHUNK, 48
+        try:
+            ticks = []
+            extract_pkg(stream_pkg, os.path.join(tmp, "out4"), progress=lambda d, t: ticks.append((d, t)))
+        finally:
+            CHUNK = saved_chunk
+        for name, blob in stream_files.items():
+            got = open(os.path.join(tmp, "out4", *name.split("/")), "rb").read()
+            assert got == blob, f"{name}: streamed content differs"
+        assert ticks and ticks[-1][0] == ticks[-1][1] == sum(len(b) for b in stream_files.values()), ticks[-1:]
+
+        # the table is checked before anything is written: unsafe Windows names, repeats, a truncated file
+        for bad_name in ("a/../b", "/abs", "C:evil", "x\\y", "dir/CON.txt", "trail.", "a:b", "q?", "A/b", "a/B"):
+            files_bad = {"ok.bin": b"1", bad_name: b"2"}
+            if bad_name in ("A/b", "a/B"):
+                files_bad = {"a/b": b"1", bad_name: b"2"}
+            bad_pkg = os.path.join(tmp, "unsafe.pkg")
+            with open(bad_pkg, "wb") as f:
+                f.write(_build_synthetic_pkg(tmp_sfo, files_bad, key_type=2))
+            target = os.path.join(tmp, "unsafe_out")
+            try:
+                extract_pkg(bad_pkg, target)
+                raise AssertionError(f"expected PkgError for the name {bad_name!r}")
+            except PkgError:
+                assert not os.path.exists(target), f"{bad_name!r}: files were written before the table was rejected"
+        with open(stream_pkg, "rb") as f:
+            whole = f.read()
+        cut = os.path.join(tmp, "cut.pkg")
+        for keep in (len(whole) - 5, len(whole) // 2, 100):
+            with open(cut, "wb") as f:
+                f.write(whole[:keep])
+            try:
+                inspect_pkg_file(cut)
+                raise AssertionError(f"expected PkgError for a PKG cut to {keep} bytes")
+            except PkgError:
+                pass
+
+        # a licence file inside the PKG is readable without extracting; a PKG without one reports None
+        license_bytes = RIF.build_rif("IP0177-PCSB00013_00-GOLFDS00000000", klic)
+        with_license = os.path.join(tmp, "with_license.pkg")
+        with open(with_license, "wb") as f:
+            f.write(_build_synthetic_pkg(tmp_sfo, {"sce_sys/param.sfo": tmp_sfo, LICENSE_NAME: license_bytes}, key_type=4))
+        with open(with_license, "rb") as f:
+            seen = inspect_pkg(_checked_reader(f, os.path.getsize(with_license)), os.path.getsize(with_license))
+            assert seen.read_entry(_checked_reader(f, os.path.getsize(with_license)), LICENSE_NAME) == license_bytes
+        assert inspect_pkg_file(stream_pkg).entry(LICENSE_NAME) is None
 
     print("pkg.py self-test: OK")
 

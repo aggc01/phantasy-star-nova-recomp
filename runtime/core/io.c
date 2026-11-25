@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include "hle.h"
 #include "guestwatch.h"
+#include "player_paths.h"
 
 /* ---- files: a Vita path "dev:rest" is <RECOMP_FS>/dev/rest on the host (app0: is the game's
  * install folder, ux0:data its data); "/dev/rest" (FIOS's own spelling) the same; a relative path
@@ -91,12 +92,17 @@ void host_path_lang(char *buf, size_t n, size_t root_len) {   /* buf = <root>/ap
 	host_path_fold(alt, base);
 	if (!stat(alt, &st) && S_ISREG(st.st_mode) && strlen(alt) < n) memcpy(buf, alt, strlen(alt) + 1);
 }
-static const char *host_path_s(const char *p, char *buf, size_t n) {
+const char *host_path_s(const char *p, char *buf, size_t n) {
 	const char *root = getenv("RECOMP_FS") ? getenv("RECOMP_FS") : "fs";
 	if (*p != '/' && !strchr(p, ':')) { snprintf(buf, n, "%s/app0/%s", root, p); host_path_lang(buf, n, strlen(root)); return buf; }
 	while (*p == '/') p++;
 	const char *colon = strchr(p, ':'), *slash = strchr(p, '/');
-	if (colon && (!slash || colon < slash)) {
+	const char *device_end = colon && (!slash || colon < slash) ? colon : slash;
+	size_t device_length = device_end ? (size_t)(device_end - p) : strlen(p);
+	/* Done by Codex. Keep guest saves outside the replaceable install generation. */
+	if (device_length == 9 && !strncasecmp(p, "savedata0", device_length))
+		root = player_save_root();
+	if (device_end && device_end == colon) {
 		const char *rest = colon + 1; while (*rest == '/') rest++;
 		snprintf(buf, n, "%s/%.*s/%s", root, (int)(colon - p), p, rest);
 	} else snprintf(buf, n, "%s/%s", root, p);

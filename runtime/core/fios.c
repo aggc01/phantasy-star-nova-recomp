@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include "psarc.h"
 #include "hle.h"
+#include "player_paths.h"
 #include "guestwatch.h"
 
 #define RET64(v) do { int64_t _v = (int64_t)(v); c->r[0] = (uint32_t)_v; c->r[1] = (uint32_t)((uint64_t)_v >> 32); } while (0)
@@ -33,22 +34,9 @@
 
 static uint64_t fios_now_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000 + t.tv_nsec / 1000; }
 void io_read_note(int64_t n, uint64_t us, int archive);   /* io.c */
-void host_path_fold(char *buf, size_t root_len);   /* io.c */
-void host_path_lang(char *buf, size_t n, size_t root_len);   /* io.c */
-static const char *root(void) { return getenv("RECOMP_FS") ? getenv("RECOMP_FS") : "fs"; }
+/* Done by Codex. Use the same mount resolution for kernel and FIOS calls. */
 static const char *fios_path(uint32_t gp, char *buf, size_t n) {
-	const char *p = (char *)G(gp);
-	if (*p != '/' && !strchr(p, ':')) { snprintf(buf, n, "%s/app0/%s", root(), p); host_path_lang(buf, n, strlen(root())); return buf; }   /* relative: the app's folder */
-	while (*p == '/') p++;
-	const char *colon = strchr(p, ':'), *slash = strchr(p, '/');
-	if (colon && (!slash || colon < slash)) {   /* "dev:rest" */
-		const char *rest = colon + 1; while (*rest == '/') rest++;
-		snprintf(buf, n, "%s/%.*s/%s", root(), (int)(colon - p), p, rest);
-	} else snprintf(buf, n, "%s/%s", root(), p);   /* "/dev/rest" */
-	for (char *q = buf + strlen(root()); *q; q++) if (*q == '\\') *q = '/';   /* a separator, as io.c */
-	host_path_fold(buf, strlen(root()));   /* names ignoring case, as io.c */
-	host_path_lang(buf, n, strlen(root()));   /* io.c: the language overlay's copy, if any */
-	return buf;
+	return host_path_s((char *)G(gp), buf, n);
 }
 
 /* ---- handles and operations */
