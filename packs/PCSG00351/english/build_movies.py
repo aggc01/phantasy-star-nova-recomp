@@ -40,10 +40,14 @@ def encode(ffmpeg, source, destination, frames, transform, crf=19):
         command = [
             str(ffmpeg), '-hide_banner', '-loglevel', 'error', '-y',
             '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', f'{width}x{height}',
-            '-r', f'{fps:.6f}', '-i', '-', '-i', str(source),
+            # (the exact NTSC rate and the originals' 30000 time scale: a decimal rate here gave the track an odd
+            # 964257 scale, which the PC plays but the Vita's own player might not)
+            '-r', '30000/1001', '-i', '-', '-i', str(source),
             '-map', '0:v', '-map', '1:a', '-c:v', 'libx264', '-preset', 'medium',
             '-crf', str(crf), '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-level', '4.0',
-            '-c:a', 'copy', '-movflags', '+faststart', str(destination),
+            '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', '-color_range', 'tv',
+            '-video_track_timescale', '30000', '-c:a', 'copy', '-metadata:s:v', 'language=eng',
+            '-movflags', '+faststart', str(destination),
         ]
         with subprocess.Popen(command, stdin=subprocess.PIPE) as encoder:
             count = 0
