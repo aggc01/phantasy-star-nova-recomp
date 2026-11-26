@@ -49,7 +49,8 @@ Get these ready. Everything else is downloaded for you.
 - [ ] **A Windows PC:** Windows 10 or 11 (64-bit), a graphics card with an up-to-date driver, and about 12 GB of free
   disk space.
 - [ ] **[Git for Windows](https://git-scm.com/download/win)** and **[Python](https://www.python.org/downloads/)**
-  3.12 or newer, installed with their default options.
+  3.12 or newer, installed with their default options. For Python, choose the **Windows installer (64-bit)**: the
+  32-bit and ARM64 versions can't install what setup needs.
 - [ ] **Your copy of the game:** *Phantasy Star Nova* for the Japanese PS Vita (`PCSG00351`), both the **1.00** game
   and the official **1.05** update. PKG files work, and so do the `app` and `patch` folders copied from a Vita.
 - [ ] **Your game's licence file:** `work.bin` or a `.rif` file. In a game folder copied from a Vita it is in
@@ -77,6 +78,15 @@ Open PowerShell in the folder where you want the project, for example your Docum
 git clone https://github.com/aggc01/phantasy-star-nova-recomp.git
 cd phantasy-star-nova-recomp
 py -3 -m venv .venv
+.\.venv\Scripts\python.exe pipeline\check_python.py
+```
+
+**It worked if** the last line says `64-bit: ready`. If it says this Python can't be used, follow its
+instructions before going on.
+
+Then install the Python packages setup uses and make a `dump` folder:
+
+```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 New-Item -ItemType Directory dump
 ```
@@ -236,6 +246,7 @@ Japanese copy.
 | --- | --- |
 | `no Windows toolchain at …` | Run step 2 again, and check that `toolchain\llvm-mingw` exists. |
 | The firmware or the game went to `%LOCALAPPDATA%\ProjectNativ` | The `dump` folder was missing. Create it (step 1) and run steps 3 and 5 again. |
+| `Building wheel for capstone … did not run successfully` or `'cmake' is not recognized` in step 1 | Your Python is 32-bit or ARM64. Install Python with the **Windows installer (64-bit)**, delete the `.venv` folder and run step 1 again. `py -0p` lists the Pythons you have: a 32-bit one shows `-32`. |
 | `Python not found` when starting the game | Create `.venv` as in step 1. |
 | The update is refused or asks for a licence | Add the base game first (step 5), with its `work.bin` or `.rif`. |
 | `English localization: … needs the Glenth Regular font` | Copy `glenthregular.ttf` into `packs\PCSG00351\english\fonts\` (step 4), then run `vitarecomp localize PCSG00351`. |
