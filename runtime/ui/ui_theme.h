@@ -77,9 +77,13 @@ inline bool primary_button(const char *label, ImVec2 size = ImVec2(0, 0)) {   /*
 /* a choice of n as one joined control; true when it changes. ids: labels may carry "##" suffixes */
 inline bool segmented(const char *const *labels, int n, int *v) {
 	bool ch = false;
-	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x * 0.25f, 0));
+	/* Keep every choice reachable in a narrow settings column. */
+	const float gap = ImGui::GetStyle().ItemSpacing.x * 0.35f;
+	const float end = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(gap, gap));
 	for (int i = 0; i < n; i++) {
-		if (i) ImGui::SameLine();
+		const float width = ImGui::CalcTextSize(labels[i], nullptr, true).x + 2 * ImGui::GetStyle().FramePadding.x;
+		if (i && ImGui::GetItemRectMax().x + gap + width <= end) ImGui::SameLine();
 		bool on = *v == i;
 		ImGui::PushStyleColor(ImGuiCol_Button, on ? with_alpha(accent, 0.18f) : card);
 		ImGui::PushStyleColor(ImGuiCol_ButtonHovered, on ? with_alpha(accent, 0.24f) : card_hi);
@@ -129,8 +133,11 @@ inline bool rows_begin(const char *id) {
 inline void row(const char *label, const char *explanation = nullptr) {
 	ImGui::TableNextRow(0, ImGui::GetFrameHeight() + ImGui::GetStyle().CellPadding.y * 2);
 	ImGui::TableNextColumn();
+	/* Group the explanation with its own label. */
+	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, ImGui::GetFontSize() * 0.23f));
 	ImGui::TextUnformatted(label);
 	if (explanation && *explanation) { ImGui::PushFont(nullptr, ImGui::GetFontSize() * 0.88f); muted_wrapped(explanation); ImGui::PopFont(); }
+	ImGui::PopStyleVar();
 	ImGui::TableNextColumn();
 }
 inline void rows_end(void) { ImGui::EndTable(); }

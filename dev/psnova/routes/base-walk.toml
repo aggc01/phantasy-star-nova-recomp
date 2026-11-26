@@ -1,0 +1,41 @@
+# Load slot 1 (Force, Steel Giants chapter, at the base) and walk and turn the camera around the base for ~40 s.
+# The inputs are the Lv7 base test of 2026-11-22 (dump/codex-fps-20261122/moving.py), which held 60 fps at 4x.
+# Run: python dev/psnova/route.py run base-walk     Compare: python dev/psnova/route.py compare base-walk
+description = "slot 1 at the base: load, then walk and pan the camera (60 fps setting)"
+fixture = "base-2026-11-22"
+save_row = 1          # the save list's row (0-based); the runtime's auto-answered picker takes it
+expect_slot = 1
+end = 4400            # the run exits at this frame (RECOMP_SHOT_LAST)
+shots = [2000, 3000, 4400]
+min_fps = 55          # a window whose mean falls below this fails the run
+gfx = "gpu"
+clock = "real"
+
+[settings]
+frame_rate = 60
+
+# Title: Start pressed every ~260 frames until the menu takes it; Circle confirms Continue and the load.
+buttons = [
+  "780-800:8", "1050-1070:8", "1310-1330:8", "1550-1570:8", "1800-1820:8", "2070-2090:8", "2340-2360:8", "2600-2620:8",
+  "1580-1600:2000", "1820-1850:2000",
+]
+# lx,ly,rx,ry (128 centred, ly 0 = forward): walk forward, walk while turning right, walk, turn left, ...
+sticks = [
+  "2080-2200:128,0", "2280-2500:128,0,200,128", "2530-2680:128,0", "2730-2920:128,128,0,128",
+  "3050-3230:128,0,200,128", "3310-3500:128,0", "3660-3900:128,128,0,128", "4010-4210:128,0,200,128",
+]
+
+[[windows]]
+name = "walk A"
+from = 2400
+to = 3000
+
+[[windows]]
+name = "walk B"
+from = 3300
+to = 3600
+
+[[windows]]
+name = "walk C"
+from = 3900
+to = 4200

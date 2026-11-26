@@ -270,6 +270,13 @@ void overlay_process_event(const SDL_Event *event) {
 	ImGui_ImplSDL3_ProcessEvent(event);
 }
 
+/* The window owns this handle and clears it before closing the device. */
+void overlay_set_gamepad(SDL_Gamepad *pad) {
+	if (!g_ctx || !g_has_window) return;
+	ImGui::SetCurrentContext(g_ctx);
+	ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, pad ? &pad : nullptr, pad ? 1 : 0);
+}
+
 /* ---- the settings both the full menu's pages and the menu bar's menus edit: read once from settings.c
  * (it has no "changed since" signal, and a slider mid-drag must not snap back to the file's value on the
  * next frame), then this copy is the live value and every edit saves at once. One setter per key, so
@@ -600,7 +607,11 @@ static void page_controls(void) {
 			char cur[16]; settings_str("camera", "light", cur, sizeof cur);
 			int v = 0; for (int i = 0; i < 3; i++) if (!strcmp(cur, ids[i])) v = i;
 			if (ui::segmented(names, 3, &v)) { settings_set_str("camera", ids[v]); settings_save(); }
-			if (v == 0) { bool lit = camera_light() != 0; ImGui::SameLine(); ImGui::TextDisabled("lamp"); ImGui::SameLine(); if (ui::toggle("lamp", &lit)) camera_light_set(lit ? 1 : 0); }
+			if (v == 0) {   /* Keep the lamp controls inside the settings column. */
+				bool lit = camera_light() != 0;
+				ImGui::AlignTextToFramePadding(); ImGui::TextDisabled("Lamp"); ImGui::SameLine();
+				if (ui::toggle("lamp", &lit)) camera_light_set(lit ? 1 : 0);
+			}
 		}
 		ui::rows_end();
 	}
@@ -663,16 +674,17 @@ static void page_saves(void) {
 	const float em = ImGui::GetFontSize();
 	{ static int last = -10; const int f = ImGui::GetFrameCount(); if (f != last + 1) g_nbk = -1; last = f; }   /* not drawn last frame (the page or the menu just opened): scan again */
 	if (g_nbk < 0) backups_rescan();
-	ui::muted_wrapped("Copies of the game's own save, kept outside the game. Back one up after the game saves, and restore it to get back to that "
-	                  "point: then load it in the game (the title screen's Continue -- restart the game first if you're playing). The game only "
-	                  "saves at its own save points. A restore backs up the save it replaces first.");
-	section_label("The game's save now");
+	/* Put the actions and current save above the backup history. */
+	ui::muted_wrapped("Create a copy of your current game saves. Restoring a backup first copies the saves it replaces.");
 	if (ui::rows_begin("savenow")) {
 		ui::row("Current save");
 		if (g_bk_have) save_words(g_bk_cur); else ImGui::TextDisabled("No save yet");
-		ui::row("New backup", "A name helps you find it later (letters, digits, spaces), e.g. after the arena. Optional.");
-		ImGui::SetNextItemWidth(em * 12); ImGui::InputTextWithHint("##bklabel", "name (optional)", g_bk_label, sizeof g_bk_label);
-		ImGui::SameLine();
+		ui::row("New backup");
+		const float button = ImGui::CalcTextSize("Back up").x + ImGui::GetStyle().FramePadding.x * 2;
+		const float input = ImGui::GetContentRegionAvail().x - button - ImGui::GetStyle().ItemSpacing.x;
+		ImGui::SetNextItemWidth(input >= em * 8 ? input : -FLT_MIN);
+		ImGui::InputTextWithHint("##bklabel", "Backup name (optional)", g_bk_label, sizeof g_bk_label);
+		if (input >= em * 8) ImGui::SameLine();
 		ImGui::BeginDisabled(!g_bk_have);
 		if (ui::primary_button("Back up")) { g_bk_err = save_backups_create(g_bk_label, g_bk_msg, sizeof g_bk_msg) != 0; if (!g_bk_err) g_bk_label[0] = 0; backups_rescan(); }
 		ImGui::EndDisabled();
@@ -697,7 +709,12 @@ static void page_saves(void) {
 		ImGui::EndTable();
 	}
 	if (g_bk_msg[0]) { ImGui::Dummy(ImVec2(0, em * 0.3f)); ImGui::PushStyleColor(ImGuiCol_Text, g_bk_err ? ui::error : ui::accent); ImGui::TextWrapped("%s", g_bk_msg); ImGui::PopStyleColor(); }
-	{ char d[1024]; save_backups_dir(d, sizeof d); ImGui::Dummy(ImVec2(0, em * 0.3f)); ImGui::TextDisabled("Kept in %s", d); }
+	if (g_nbk > 0) {
+		char path[1024]; save_backups_dir(path, sizeof path);
+		ImGui::Dummy(ImVec2(0, em * 0.3f));
+		ImGui::TextDisabled("Backup folder");
+		ui::muted_wrapped(path);
+	}
 	if (g_bk_ask >= 0 && g_bk_ask < g_nbk) {   /* the confirmation, a modal over the menu */
 		if (!ImGui::IsPopupOpen("##bkask")) ImGui::OpenPopup("##bkask");
 		ImGui::SetNextWindowSize(ImVec2(em * 26, 0));
@@ -725,34 +742,63 @@ static void page_saves(void) {
  * sections down the side, the page, and Resume / Capture / Quit at the foot */
 enum { TAB_DISPLAY, TAB_PERF, TAB_GAME, TAB_CONTROLS, TAB_HELP, TAB_SAVES, TAB_N };
 static const char *const g_tab_names[TAB_N] = {"Display", "Performance", "Game", "Controls", "Help", "Saves"};
-static const char *const g_tab_blurbs[TAB_N] = {"Resolution, picture and image quality", "Frame rate and on-screen stats",
-	"Frame rate, view and detail options, volume", "Keyboard, mouse, controller, gyro and camera", "Shortcuts and about",
-	"Backups of the game's own save, to get back to a place"};
 static int g_select_tab = -1;   /* the bar asked for this page (open_page): selected on the menu's next frame, then -1 */
 static int g_section = TAB_DISPLAY;
 static void open_page(int tab) { g_select_tab = tab; overlay_open(); }
+
+/* Size host panels from the usable viewport, including short
+ * windows and fullscreen. The game renders its own UI at its usual scale. */
+static float panel_scale(float width, float height) {
+	return fmaxf(0.78f, fminf(1.55f, fminf(width / 960.0f, height / 544.0f)));
+}
+struct PanelStyle {
+	explicit PanelStyle(float scale) {
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * scale, 16 * scale));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(11 * scale, 6 * scale));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10 * scale, 8 * scale));
+		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6 * scale);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12 * scale);
+		ImGui::PushFont(nullptr, 15 * scale);
+	}
+	~PanelStyle() {
+		ImGui::PopFont();
+		ImGui::PopStyleVar(5);
+	}
+};
+
 static void build_ui(void) {
 	ImGuiIO &io = ImGui::GetIO();
-	const float em = ImGui::GetFontSize();
+	const float scale = panel_scale(io.DisplaySize.x, io.DisplaySize.y), em = 15 * scale;
+	const PanelStyle style(scale);
 	if (g_select_tab >= 0) { g_section = g_select_tab; g_select_tab = -1; }
-	ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, ui::u32(ui::bg, 0.62f));   /* the paused game, dimmed behind */
-	const float W = io.DisplaySize.x - 2 * em < 58 * em ? io.DisplaySize.x - 2 * em : 58 * em;
-	const float H = io.DisplaySize.y - 2 * em < 38 * em ? io.DisplaySize.y - 2 * em : 38 * em;
+	ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize, ui::u32(ui::bg, 0.60f));
+	const float W = fminf(io.DisplaySize.x - 16 * scale, 900 * scale);
+	const float H = fminf(io.DisplaySize.y - 24 * scale, 540 * scale);
+	const bool compact = W < em * 56;
 	ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 	ImGui::SetNextWindowSize(ImVec2(W, H), ImGuiCond_Always);
-	ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::surface);
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, ui::bg);
 	ImGui::Begin("##menu", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar);
 	ImGui::PopStyleColor();
-	/* header: the game, Paused, Resume */
-	{	const char *name = std::getenv("RECOMP_GAME_NAME"); if (!name || !*name) name = std::getenv("RECOMP_TITLE"); if (!name || !*name) name = "Project Nativ";
-		ui::heading(name, em * 1.35f);
-		ImGui::SameLine(0, em * 0.7f); ImGui::SetCursorPosY(ImGui::GetCursorPosY() + em * 0.18f); ui::chip("Paused", ui::accent);
-		float rw = ImGui::CalcTextSize("Resume").x + ImGui::GetStyle().FramePadding.x * 2;
-		ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - rw);
-		if (ui::primary_button("Resume")) overlay_close();
+	/* Reserve a column for Resume so a long title can wrap. */
+	const char *name = std::getenv("RECOMP_GAME_NAME");
+	if (!name || !*name) name = nova_title() ? "Phantasy Star Nova" : std::getenv("RECOMP_TITLE");
+	if (!name || !*name) name = "Project Nativ";
+	if (ImGui::BeginTable("header", 2, ImGuiTableFlags_NoPadOuterX)) {
+		ImGui::TableSetupColumn("title", ImGuiTableColumnFlags_WidthStretch);
+		ImGui::TableSetupColumn("resume", ImGuiTableColumnFlags_WidthFixed, em * 7);
+		ImGui::TableNextColumn();
+		ImGui::PushFont(nullptr, em * 1.5f);
+		ImGui::TextWrapped("%s", name);
+		ImGui::PopFont();
+		ui::dot(ui::accent);
+		ImGui::TextDisabled("Paused");
+		ImGui::TableNextColumn();
+		if (ui::primary_button("Resume", ImVec2(-FLT_MIN, 0))) overlay_close();
+		ImGui::EndTable();
 	}
-	ImGui::Dummy(ImVec2(0, em * 0.2f));
-	const float foot = ImGui::GetFrameHeightWithSpacing() + em * 0.9f;
+	ImGui::Separator();
+	const float foot = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 2;
 	/* the sections; a controller's L1 / R1 (or Ctrl+Tab, Ctrl+Shift+Tab) step them in the sidebar's order -- the sidebar and
 	 * the page are separate panels the D-pad doesn't cross -- and the new page's first row takes the focus */
 	static const int order[TAB_N] = {TAB_DISPLAY, TAB_GAME, TAB_SAVES, TAB_CONTROLS, TAB_PERF, TAB_HELP};
@@ -763,41 +809,59 @@ static void build_ui(void) {
 		if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || (ctrl && !shift && ImGui::IsKeyPressed(ImGuiKey_Tab, false))) step = 1;
 		if (step && g_bk_ask < 0) { int k = 0; while (k < TAB_N - 1 && order[k] != g_section) k++; g_section = order[(k + step + TAB_N) % TAB_N]; focus_page = true; }   /* (not under the Saves page's confirmation: it would stay in ImGui's popup stack) */
 	}
-	ImGui::BeginChild("nav", ImVec2(em * 11.5f, -foot), 0);
+	/* The same section order fits a rail or a two-row bar. */
+	if (!compact) ImGui::BeginChild("nav", ImVec2(em * 9.4f, -foot), 0);
+	const float section_width = compact ? (ImGui::GetContentRegionAvail().x - 2 * ImGui::GetStyle().ItemSpacing.x) / 3 :
+		ImGui::GetContentRegionAvail().x;
 	for (int k = 0; k < TAB_N; k++) {
-		int i = order[k]; bool on = g_section == i;
-		ImVec2 p = ImGui::GetCursorScreenPos(); float h = ImGui::GetFrameHeight() * 1.15f, w = ImGui::GetContentRegionAvail().x;
+		if (compact && k % 3) ImGui::SameLine();
+		const int i = order[k];
+		const bool on = g_section == i;
 		ImGui::PushID(i);
-		if (ImGui::InvisibleButton("sec", ImVec2(w, h))) g_section = i;
-		bool hov = ImGui::IsItemHovered() || ImGui::IsItemFocused();
-		ImDrawList *dl = ImGui::GetWindowDrawList();
-		if (on || hov) dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), ui::u32(on ? ui::card_hi : ui::card), ImGui::GetStyle().FrameRounding);
-		if (on) dl->AddRectFilled(ImVec2(p.x, p.y + h * 0.22f), ImVec2(p.x + 3, p.y + h * 0.78f), ui::u32(ui::accent), 2);
-		dl->AddText(ImVec2(p.x + em * 0.9f, p.y + (h - ImGui::GetTextLineHeight()) * 0.5f), ui::u32(on ? ui::text : ui::muted), g_tab_names[i]);
+		ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(compact ? 0.5f : 0.0f, 0.5f));
+		ImGui::PushStyleColor(ImGuiCol_Button, on ? ui::with_alpha(ui::accent, 0.17f) : ui::bg);
+		ImGui::PushStyleColor(ImGuiCol_Text, on ? ui::accent_hi : ui::text);
+		if (ImGui::Button(g_tab_names[i], ImVec2(section_width, ImGui::GetFrameHeight()))) g_section = i;
+		if (on) {
+			const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+			ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(a.x + 1, a.y + 5 * scale),
+				ImVec2(a.x + 3 * scale, b.y - 5 * scale), ui::u32(ui::accent), 1.5f * scale);
+		}
+		ImGui::PopStyleColor(2);
+		ImGui::PopStyleVar();
 		ImGui::PopID();
 	}
-	ImGui::EndChild();
-	ImGui::SameLine(0, em * 0.8f);
+	if (!compact) {
+		ImGui::EndChild();
+		ImGui::SameLine(0, em * 0.8f);
+	}
 	/* the page */
-	ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::bg);
-	ImGui::BeginChild("page", ImVec2(0, -foot), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, ui::surface);
+	ImGui::BeginChild(g_tab_names[g_section], ImVec2(0, -foot), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
 	ImGui::PopStyleColor();
 	ui::heading(g_tab_names[g_section], em * 1.25f);
-	ImGui::TextDisabled("%s", g_tab_blurbs[g_section]);
+	ImGui::Separator();
 	if (focus_page) { if (g_section != TAB_SAVES) ImGui::SetKeyboardFocusHere(); focus_page = false; }   /* (the page's first control; not on Saves, whose first is the name field: focused it starts text editing, which holds L1/R1) */
 	ImGui::Dummy(ImVec2(0, em * 0.2f));
 	static void (*const pages[TAB_N])(void) = {page_display, page_performance, page_game, page_controls, page_help, page_saves};
 	pages[g_section]();
 	ImGui::EndChild();
-	/* the foot */
-	ImGui::Dummy(ImVec2(0, em * 0.15f));
-	if (ImGui::Button("Capture frame (F12)")) g_want_capture = true;
-	ImGui::SameLine(); ImGui::TextDisabled(SDL_HasGamepad() ? "L1 / R1: sections   Esc, F10 or the PS button closes this menu" : "Esc, F10 or the PS button closes this menu");
+	/* Drop the optional hint before it can overlap an action. */
+	ImGui::Separator();
+	if (ImGui::Button("Capture frame")) g_want_capture = true;
+	if (ImGui::IsItemHovered()) ImGui::SetTooltip("F12");
 	const char *quit = quit_label();
-	float qw = ImGui::CalcTextSize(quit).x + ImGui::GetStyle().FramePadding.x * 2;
-	ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - qw);
+	const float qw = ImGui::CalcTextSize(quit).x + ImGui::GetStyle().FramePadding.x * 2;
+	const float end = ImGui::GetWindowContentRegionMax().x - qw;
+	const char *hint = window_gamepad_connected() ? "LB / RB  Switch section" : "Ctrl + Tab  Switch section";
+	ImGui::SameLine();
+	if (ImGui::GetCursorPosX() + ImGui::CalcTextSize(hint).x + em <= end) {
+		ImGui::AlignTextToFramePadding();
+		ImGui::TextDisabled("%s", hint);
+		ImGui::SameLine(end);
+	} else if (end >= ImGui::GetCursorPosX()) ImGui::SameLine(end);
 	ImGui::PushStyleColor(ImGuiCol_Text, ui::error);
-	if (ImGui::Button(quit)) g_want_quit = true;
+	if (ImGui::Button(quit)) overlay_quit_confirm();   /* Reuse the existing quit prompt. */
 	ImGui::PopStyleColor();
 	ImGui::End();
 }
@@ -1094,6 +1158,9 @@ static void build_marks(void) {
  * Backspace; the mouse: hover and click. window.c hands this the keys and the pad while overlay_dialog_active
  * (ImGui's SDL backend polls the pad itself, so its buttons arrive whatever the routing). */
 static int g_sd_seq = -1, g_sd_sel; static bool g_sd_armed;
+/* A local confirmation stays on the same guest list step. */
+static int g_sd_delete_id = -1;
+static bool g_sd_delete_accept;
 int overlay_dialog_active(void) {
 	if (!g_ctx || !g_has_window) return 0;
 	if (ime_active()) return 1;
@@ -1105,7 +1172,8 @@ static const ImGuiKey K_DOWN[] = {ImGuiKey_DownArrow, ImGuiKey_S, ImGuiKey_Gamep
 static const ImGuiKey K_SIDE[] = {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_A, ImGuiKey_D, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight};
 static const ImGuiKey K_OK[] = {ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space, ImGuiKey_GamepadFaceDown};
 static const ImGuiKey K_BACK[] = {ImGuiKey_Escape, ImGuiKey_Backspace, ImGuiKey_GamepadFaceRight};
-template <size_t N> static bool keys_pressed(const ImGuiKey (&k)[N]) { for (ImGuiKey x : k) if (ImGui::IsKeyPressed(x, true)) return true; return false; }
+static const ImGuiKey K_DELETE[] = {ImGuiKey_Delete, ImGuiKey_GamepadFaceLeft};
+template <size_t N> static bool keys_pressed(const ImGuiKey (&k)[N], bool repeat = true) { for (ImGuiKey x : k) if (ImGui::IsKeyPressed(x, repeat)) return true; return false; }
 template <size_t N> static bool keys_down(const ImGuiKey (&k)[N]) { for (ImGuiKey x : k) if (ImGui::IsKeyDown(x)) return true; return false; }
 
 /* The game keeps polling SceIme while this independent editor
@@ -1231,38 +1299,46 @@ static void build_name_editor(float w, float h) {
 	static const ImGuiKey opening[] = {ImGuiKey_C, ImGuiKey_Enter, ImGuiKey_KeypadEnter, ImGuiKey_Space,
 		ImGuiKey_Escape, ImGuiKey_GamepadFaceDown, ImGuiKey_GamepadFaceRight, ImGuiKey_GamepadStart};
 	if (!editor.armed && !keys_down(opening) && !ImGui::IsAnyMouseDown()) editor.armed = true;
+	/* Match the other host dialogs and keep the name above the keys. */
+	const float scale = panel_scale(w, h);
+	const PanelStyle style(scale);
 	ImGui::SetNextWindowPos(ImVec2(w / 2, h / 2), ImGuiCond_Always, ImVec2(.5f, .5f));
-	ImGui::SetNextWindowSize(ImVec2(fminf(w - 16, editor.pad ? 560 : 420), 0), ImGuiCond_Always);
+	ImGui::SetNextWindowSize(ImVec2(fminf(w - 16, (editor.pad ? 600 : 460) * scale), 0), ImGuiCond_Always);
 	if (opened) ImGui::SetNextWindowFocus();
-	ImGui::Begin("Character name", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-		ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings);
+	ImGui::Begin("##character-name-dialog", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+		ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings);
+	ui::heading("Character name", 22 * scale);
+	ImGui::Separator();
 	bool confirm = false, cancel = false;
 	if (editor.pad) {
-		ImGui::TextUnformatted(editor.text[0] ? editor.text : "Enter a name");
+		ui::heading(editor.text[0] ? editor.text : "Enter a name", 19 * scale);
 		ImGui::TextDisabled("%u / %u", name_units(editor.text), editor.limit);
 		const bool select = editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceDown, false);
-		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5, 6));
-		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3, 4));
+		ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(5 * scale, 6 * scale));
+		ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3 * scale, 4 * scale));
 		confirm = name_key_grid(editor, select);
 		ImGui::PopStyleVar(2);
 		confirm |= editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false);
 		cancel = editor.armed && ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
-		ImGui::TextDisabled("D-pad  Move    Cross  Select    Start  Confirm    Circle  Cancel");
+		ui::muted_wrapped("D-pad Move   |   A / Cross Select   |   Start Confirm   |   B / Circle Cancel");
 	} else {
 		if (opened) ImGui::SetKeyboardFocusHere();
+		ImGui::PushFont(nullptr, 18 * scale);
 		ImGui::SetNextItemWidth(-1);
 		confirm = ImGui::InputText("##character-name", editor.text, sizeof editor.text,
 			ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll |
 			ImGuiInputTextFlags_CallbackEdit, name_edited, &editor) && editor.armed;
+		ImGui::PopFont();
 		cancel = editor.armed && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
 		ImGui::TextDisabled("%u / %u", name_units(editor.text), editor.limit);
 	}
-	ImGui::BeginDisabled(!editor.armed || !editor.text[std::strspn(editor.text, " ")]);
-	confirm |= ImGui::Button("Confirm");
-	ImGui::EndDisabled();
-	ImGui::SameLine();
+	ImGui::Separator();
 	ImGui::BeginDisabled(!editor.armed);
 	cancel |= ImGui::Button("Cancel");
+	ImGui::EndDisabled();
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!editor.armed || !editor.text[std::strspn(editor.text, " ")]);
+	confirm |= ui::primary_button("Confirm");
 	ImGui::EndDisabled();
 	ImGui::End();
 	if (cancel) ime_cancel(editor.seq);
@@ -1270,74 +1346,182 @@ static void build_name_editor(float w, float h) {
 	else return;
 	editor.answered = true;
 }
+
+/* Nova stores name/classLvN/playtime in one metadata field.
+ * The last two slashes are separators even when a player's name has slashes. */
+static void save_card_text(const SaveDlgRow &row, bool english, std::string &name, std::string &progress) {
+	name = row.title;
+	progress = nova_save_subtitle(row.sub, english);
+	const size_t time = progress.rfind('/');
+	const size_t player = time == std::string::npos || time == 0 ? std::string::npos : progress.rfind('/', time - 1);
+	if (player == std::string::npos || player == 0 || player + 1 >= time || time + 1 >= progress.size()) return;
+	const size_t level = progress.rfind("Lv", time);
+	if (level == std::string::npos || level <= player + 1 || level + 2 >= time ||
+	    progress.find_first_not_of("0123456789", level + 2) != time) return;
+	name = progress.substr(0, player);
+	progress = progress.substr(player + 1, level - player - 1) + "  ·  Lv. " +
+		progress.substr(level + 2, time - level - 2) + "  ·  " + progress.substr(time + 1);
+}
+
 static void build_save_dialog(float w, float hgt) {
 	SaveDlgView v; const int kind = savedlg_view(&v);
 	if (kind == SAVEDLG_NONE) { savedlg_release(); g_sd_seq = -1; return; }
 	const bool nova = nova_title(), en = nova && nova_save_english();
 	const bool mouse_keys = window_kbm_active() || !window_gamepad_connected();
-	if (v.seq != g_sd_seq) { g_sd_seq = v.seq; g_sd_sel = kind == SAVEDLG_LIST ? v.focus : 0; g_sd_armed = false; }
+	const bool new_step = v.seq != g_sd_seq;
+	if (new_step) {
+		g_sd_seq = v.seq; g_sd_sel = kind == SAVEDLG_LIST ? v.focus : 0; g_sd_armed = false;
+		g_sd_delete_id = -1;
+	}
 	/* a key already down as the step appeared (the press that asked the game to save) answers nothing */
-	if (!g_sd_armed && !keys_down(K_OK) && !keys_down(K_BACK)) g_sd_armed = true;
+	if (!g_sd_armed && !keys_down(K_OK) && !keys_down(K_BACK) && (!nova || !keys_down(K_DELETE))) g_sd_armed = true;
 	const bool ok = g_sd_armed && !keys_down(K_BACK) && keys_pressed(K_OK);
 	const bool back = g_sd_armed && keys_pressed(K_BACK);
-	int answer = 0; bool answered = false, moved = false;
-	const float s = w >= 1400 ? 2.0f : 1.0f;   /* (the bitmap font: integer multiples stay crisp) */
+	int answer = 0; bool answered = false, moved = new_step;
+	int ask_delete = -1, delete_id = -1;
+	const float s = panel_scale(w, hgt);
+	const PanelStyle style(s);
+	const bool confirming_delete = kind == SAVEDLG_LIST && g_sd_delete_id >= 0;
 	ImGui::SetNextWindowPos(ImVec2(w * 0.5f, hgt * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-	ImGui::SetNextWindowSize(ImVec2(fminf(w - 24, (nova ? 625 : 520) * s), 0), ImGuiCond_Always);
-	ImGui::SetNextWindowBgAlpha(0.95f);
+	ImGui::SetNextWindowSize(ImVec2(fminf(w - 24, (kind == SAVEDLG_LIST && !confirming_delete ? 672 : 464) * s), 0), ImGuiCond_Always);
+	ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), ImVec2(w, hgt), ui::u32(ui::bg, 0.54f));
 	ImGui::Begin("##savedlg", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing);
-	ImGui::SetWindowFontScale(s);
 	const ImU32 dim = ImGui::GetColorU32(ImGuiCol_TextDisabled), txt = ImGui::GetColorU32(ImGuiCol_Text);
 	const char *heading = v.disp == 2 ? "Load saved data" : v.disp == 3 ? "Delete saved data" : "Save game";
-	if (nova) ImGui::SeparatorText(heading);
-	if (kind == SAVEDLG_LIST) {
+	if (nova) {
+		ui::heading(confirming_delete ? "Delete saved data?" : heading, 23 * s);
+		ImGui::Separator();
+	}
+	if (confirming_delete) {
+		for (int i = 0; i < v.nrows; i++) {
+			const SaveDlgRow &r = v.rows[i];
+			if (r.id != (uint32_t)g_sd_delete_id) continue;
+			std::string name, progress;
+			save_card_text(r, en, name, progress);
+			ImGui::TextWrapped("Slot %u  ·  %s", r.id + 1, name.c_str());
+			if (!progress.empty()) ui::muted_wrapped(progress.c_str());
+			break;
+		}
+		ui::muted_wrapped("This save will move to the deleted saves folder.");
+		ImGui::Spacing();
+		if (g_sd_armed && (keys_pressed(K_SIDE, false) || keys_pressed(K_UP, false) || keys_pressed(K_DOWN, false)))
+			g_sd_delete_accept = !g_sd_delete_accept;
+		bool cancel = (g_sd_delete_accept ? ImGui::Button("Cancel") : ui::primary_button("Cancel")) || back;
+		ImGui::SameLine();
+		if (g_sd_delete_accept) {
+			ImGui::PushStyleColor(ImGuiCol_Button, ui::error);
+			ImGui::PushStyleColor(ImGuiCol_Text, ui::accent_ink);
+		}
+		bool remove = ImGui::Button("Delete");
+		if (g_sd_delete_accept) ImGui::PopStyleColor(2);
+		if (ok) {
+			cancel |= !g_sd_delete_accept;
+			remove |= g_sd_delete_accept;
+		}
+		if (cancel || remove) {
+			if (!cancel) delete_id = g_sd_delete_id;
+			g_sd_delete_id = -1;
+			g_sd_armed = false;
+		}
+	} else if (kind == SAVEDLG_LIST) {
+		const bool manage = nova && (v.disp == 1 || v.disp == 2);
 		if (!nova) { ImGui::TextUnformatted(v.title[0] ? v.title : "Saved data"); ImGui::Separator(); }
 		if (g_sd_armed && v.nrows) {
 			if (keys_pressed(K_UP) && g_sd_sel > 0) { g_sd_sel--; moved = true; }
 			if (keys_pressed(K_DOWN) && g_sd_sel < v.nrows - 1) { g_sd_sel++; moved = true; }
 		}
-		if (g_sd_sel >= v.nrows) g_sd_sel = v.nrows ? v.nrows - 1 : 0;
-		if (!v.nrows) ImGui::TextDisabled("There is no saved data.");
+		if (g_sd_sel >= v.nrows) { g_sd_sel = v.nrows ? v.nrows - 1 : 0; moved = true; }
+		if (!v.nrows) ui::muted_wrapped("There are no saves to show.");
 		else {
-			const float lh = ImGui::GetTextLineHeight(), rowh = 3 * lh + (nova ? 18 : 12) * s;
-			const float list_height = (rowh + ImGui::GetStyle().ItemSpacing.y) * (float)(v.nrows < 5 ? v.nrows : 5);
-			ImGui::BeginChild("rows", ImVec2(0, fminf(list_height, fmaxf(rowh, hgt - 135 * s))));
+			const float lh = ImGui::GetTextLineHeight(), rowh = 3 * lh + (nova ? 24 : 12) * s;
+			const float gap = ImGui::GetStyle().ItemSpacing.y;
+			const float list_height = rowh * v.nrows + gap * (v.nrows - 1);
+			ImGui::BeginChild("rows", ImVec2(0, fminf(list_height, fmaxf(rowh, hgt - 164 * s))));
 			ImFont *font = ImGui::GetFont(); const float fs = ImGui::GetFontSize();
+			if (nova) {
+				const ImVec4 clear(0, 0, 0, 0);
+				ImGui::PushStyleColor(ImGuiCol_Header, clear);
+				ImGui::PushStyleColor(ImGuiCol_HeaderHovered, clear);
+				ImGui::PushStyleColor(ImGuiCol_HeaderActive, clear);
+			}
 			for (int i = 0; i < v.nrows; i++) {
 				const SaveDlgRow &r = v.rows[i];
 				ImGui::PushID(i);
 				const ImVec2 p = ImGui::GetCursorScreenPos(); const float rw = ImGui::GetContentRegionAvail().x;
-				if (ImGui::Selectable("##row", i == g_sd_sel, 0, ImVec2(0, rowh))) { answer = i; answered = true; }
-				if (ImGui::IsItemHovered() && (ImGui::GetIO().MouseDelta.x || ImGui::GetIO().MouseDelta.y)) g_sd_sel = i;
+				/* The secondary action has a hit area of its own. */
+				const bool can_delete = manage && r.can_delete;
+				const float delete_w = can_delete ? ImGui::CalcTextSize("Delete…").x + 2 * ImGui::GetStyle().FramePadding.x : 0;
+				const float select_w = can_delete ? fmaxf(1, rw - delete_w - 20 * s) : 0;
+				if (ImGui::Selectable("##row", i == g_sd_sel, 0, ImVec2(select_w, rowh))) { answer = i; answered = true; }
+				const bool hovered = ImGui::IsItemHovered();
+				if (hovered && (ImGui::GetIO().MouseDelta.x || ImGui::GetIO().MouseDelta.y)) g_sd_sel = i;
 				if (moved && i == g_sd_sel) ImGui::SetScrollHereY(0.5f);
 				ImDrawList *dl = ImGui::GetWindowDrawList();
-				float text_x = p.x + 6 * s;
 				if (nova) {
-					const ImU32 selected = ImGui::GetColorU32(i == g_sd_sel ? ui::accent : ui::muted);
-					if (i == g_sd_sel) dl->AddRectFilled(p, ImVec2(p.x + 3 * s, p.y + rowh), selected, 1);
-					const float icon_size = rowh - 14 * s;
-					const ImVec2 a(p.x + 11 * s, p.y + 7 * s), b(a.x + icon_size, a.y + icon_size);
-					if (r.exists && g_save_icon) dl->AddImage((ImTextureID)(intptr_t)g_save_icon, a, b);
-					else dl->AddRect(a, b, selected, 4);
-					text_x = b.x + 10 * s;
+					/* Character and progress get the left column.
+					 * Date and the row action stay on the right. */
+					const bool selected = i == g_sd_sel;
+					const ImVec2 end(p.x + rw, p.y + rowh);
+					dl->AddRectFilled(p, end, ui::u32(selected || hovered ? ui::card_hi : ui::surface), 7 * s);
+					dl->AddRect(p, end, ui::u32(selected ? ui::with_alpha(ui::accent, 0.78f) : ui::border), 7 * s);
+					char slot[24]; std::snprintf(slot, sizeof slot, "Slot %u", r.id + 1);
+					const float pad = 12 * s, right = end.x - pad;
+					const float slot_w = font->CalcTextSizeA(fs, FLT_MAX, 0, slot).x;
+					const float date_w = font->CalcTextSizeA(fs, FLT_MAX, 0, r.date).x;
+					const float text_end = right - fmaxf(slot_w, fmaxf(date_w, delete_w)) - pad;
+					float text_x = p.x + pad;
+					if (r.exists && g_save_icon && rw >= 310 * s) {
+						const float icon_size = rowh - 2 * pad;
+						const ImVec2 a(text_x, p.y + pad), b(a.x + icon_size, a.y + icon_size);
+						dl->AddImageRounded((ImTextureID)(intptr_t)g_save_icon, a, b, ImVec2(0, 0), ImVec2(1, 1), IM_COL32_WHITE, 5 * s);
+						text_x = b.x + pad;
+					}
+					const ImVec4 clip(text_x, p.y, fmaxf(text_x, text_end), end.y);
+					std::string name, progress;
+					save_card_text(r, en, name, progress);
+					const auto detail = nova_save_detail(r.detail, en);
+					dl->AddText(font, 19 * s, ImVec2(text_x, p.y + 7 * s), txt, name.c_str(), nullptr, 0, &clip);
+					dl->AddText(font, fs, ImVec2(text_x, p.y + 12 * s + lh), dim, progress.c_str(), nullptr, 0, &clip);
+					dl->AddText(font, fs, ImVec2(text_x, p.y + 14 * s + 2 * lh), dim, detail.c_str(), nullptr, 0, &clip);
+					dl->AddText(font, fs, ImVec2(right - slot_w, p.y + 5 * s), ui::u32(selected ? ui::accent_hi : ui::muted), slot);
+					dl->AddText(font, fs, ImVec2(right - date_w, p.y + 5 * s + lh), dim, r.date);
+				} else {
+					const float text_x = p.x + 6 * s;
+					dl->AddText(font, fs, ImVec2(text_x, p.y + 4 * s), txt, r.title);
+					dl->AddText(font, fs, ImVec2(text_x, p.y + 6 * s + lh), txt, r.exists ? r.sub : "(empty)");
+					if (r.exists) {
+						dl->AddText(font, fs, ImVec2(text_x, p.y + 8 * s + 2 * lh), dim, r.detail);
+						const float date_w = font->CalcTextSizeA(fs, FLT_MAX, 0, r.date).x;
+						dl->AddText(font, fs, ImVec2(p.x + rw - date_w - 6 * s, p.y + 4 * s), dim, r.date);
+					}
 				}
-				dl->AddText(font, fs, ImVec2(text_x, p.y + 4 * s), txt, r.title);
-				if (r.exists) {
-					const float dw = font->CalcTextSizeA(fs, FLT_MAX, 0, r.date).x;
-					dl->AddText(font, fs, ImVec2(p.x + rw - dw - 6 * s, p.y + 4 * s), dim, r.date);
-					const auto subtitle = nova_save_subtitle(r.sub, en), detail = nova_save_detail(r.detail, en);
-					if (!subtitle.empty()) dl->AddText(font, fs, ImVec2(text_x, p.y + 6 * s + lh), txt, subtitle.c_str());
-					if (!detail.empty()) dl->AddText(font, fs, ImVec2(text_x, p.y + 8 * s + 2 * lh), dim, detail.c_str());
-				} else dl->AddText(font, fs, ImVec2(text_x, p.y + 6 * s + lh), dim, "(empty)");
+				if (can_delete) {
+					ImGui::SameLine(0, 0);
+					ImGui::SetCursorScreenPos(ImVec2(p.x + rw - delete_w - 12 * s, p.y + rowh - ImGui::GetFrameHeight() - 5 * s));
+					ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1);
+					ImGui::PushStyleColor(ImGuiCol_Button, ui::bg);
+					if (ImGui::Button("Delete…", ImVec2(delete_w, 0))) { g_sd_sel = i; ask_delete = (int)r.id; }
+					ImGui::PopStyleColor();
+					ImGui::PopStyleVar();
+				}
 				ImGui::PopID();
 			}
+			if (nova) ImGui::PopStyleColor(3);
 			ImGui::EndChild();
 		}
+		if (manage && v.nrows && v.rows[g_sd_sel].can_delete && g_sd_armed && keys_pressed(K_DELETE, false))
+			ask_delete = (int)v.rows[g_sd_sel].id;
 		if (ok && v.nrows) { answer = g_sd_sel; answered = true; }
 		ImGui::Separator();
 		if (ImGui::Button("Back") || back) { answer = SAVEDLG_CANCEL; answered = true; }
-		ImGui::SameLine(); ImGui::TextDisabled("%s", !nova ? "Cross / Enter: choose    Circle / Esc: back" :
-			mouse_keys ? "Enter  Select    Esc  Back" : "Cross  Select    Circle  Back");
+		const bool can_delete = manage && v.nrows && v.rows[g_sd_sel].can_delete;
+		const char *hint = !nova ? "Cross or Enter  Select   |   Circle or Esc  Back" :
+			mouse_keys ? (can_delete ? "Enter  Select   |   Del  Delete" : "Enter  Select") :
+			(can_delete ? "A / Cross  Select   |   X / Square  Delete" : "A / Cross  Select");
+		if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(hint).x <=
+		    ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
+		ImGui::AlignTextToFramePadding();
+		ui::muted_wrapped(hint);
 	} else if (kind == SAVEDLG_YESNO) {
 		ImGui::PushTextWrapPos(0); ImGui::TextUnformatted(v.msg[0] ? v.msg : "Continue?"); ImGui::PopTextWrapPos();
 		ImGui::Spacing();
@@ -1346,15 +1530,15 @@ static void build_save_dialog(float w, float hgt) {
 		for (int b = 0; b < 2; b++) {
 			if (b) ImGui::SameLine();
 			const bool sel = g_sd_sel == b;
-			if (sel) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-			if (ImGui::Button(names[b], ImVec2(90 * s, 0))) { answer = b ? SAVEDLG_NO : SAVEDLG_YES; answered = true; }
-			if (sel) ImGui::PopStyleColor();
+			const ImVec2 size(90 * s, 0);
+			if (sel ? ui::primary_button(names[b], size) : ImGui::Button(names[b], size)) {
+				answer = b ? SAVEDLG_NO : SAVEDLG_YES; answered = true;
+			}
 			if (ImGui::IsItemHovered() && (ImGui::GetIO().MouseDelta.x || ImGui::GetIO().MouseDelta.y)) g_sd_sel = b;
 		}
 		if (ok) { answer = g_sd_sel ? SAVEDLG_NO : SAVEDLG_YES; answered = true; }
 		if (back) { answer = SAVEDLG_CANCEL; answered = true; }
-		ImGui::SameLine(); ImGui::TextDisabled("%s", !nova ? "Cross / Enter    Circle / Esc: back" :
-			mouse_keys ? "Enter  Confirm    Esc  Back" : "Cross  Confirm    Circle  Back");
+		ui::muted_wrapped(mouse_keys ? "Enter  Confirm   |   Esc  Back" : "A / Cross  Confirm   |   B / Circle  Back");
 	} else {   /* SAVEDLG_WAIT: the game closes it */
 		ImGui::PushTextWrapPos(0); ImGui::TextUnformatted(v.msg[0] ? v.msg : "Please wait..."); ImGui::PopTextWrapPos();
 		if (v.percent >= 0) ImGui::ProgressBar(v.percent / 100.0f, ImVec2(-1, 0));
@@ -1362,6 +1546,18 @@ static void build_save_dialog(float w, float hgt) {
 	ImGui::End();
 	const int seq = v.seq;
 	savedlg_release();   /* (before answering: savedlg_answer takes the same lock) */
+	if (delete_id >= 0) {
+		char message[256];
+		const int result = savedlg_delete_nova_slot(seq, (uint32_t)delete_id, message, sizeof message);
+		overlay_toast_titled(result == 0 ? "Save deleted" : "Delete failed", message, 5.0);
+		return;
+	}
+	if (ask_delete >= 0 && !(answered && answer == SAVEDLG_CANCEL)) {
+		g_sd_delete_id = ask_delete;
+		g_sd_delete_accept = false;
+		g_sd_armed = false;
+		return;
+	}
 	if (answered) savedlg_answer(seq, answer);
 }
 /* everything the closed state shows, and the bar's state machine (see the file's header comment) */
@@ -1441,8 +1637,8 @@ static void render_frame(SDL_GPUCommandBuffer *cmd, SDL_GPUTexture *target, uint
 	if (!g_ctx || !w || !h) return;
 	ImGui::SetCurrentContext(g_ctx);
 	ImGuiIO &io = ImGui::GetIO();
-	/* keyboard and gamepad navigation only while the full menu is up: the bar is pointer-only, and while
-	 * it's closed a game's keys and pad are the game's (window.c forwards only mouse events then) */
+	/* Save and name dialogs read the backend's key state directly.
+	 * ImGui's automatic widget navigation belongs to the full menu. */
 	io.ConfigFlags &= ~(ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad);
 	if (g_open) io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
 	ImGui_ImplSDLGPU3_NewFrame();

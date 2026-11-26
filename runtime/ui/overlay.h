@@ -72,9 +72,9 @@ int overlay_wants_capture(void);
 
 /* interactive mode only (window != NULL at overlay_init): forwards one SDL event to ImGui. A no-op,
  * cheaply, when the overlay wasn't initialised with a window (headless) or ImGui isn't capturing.
- * window.c forwards every event while the full menu is open, and only mouse and window events while
- * it's closed (the bar is pointer-only; the keys and the pad stay the game's). */
+ * The window sends dialog events too, and owns the controller shared with ImGui. */
 void overlay_process_event(const SDL_Event *event);
+void overlay_set_gamepad(SDL_Gamepad *pad);
 
 /* builds one ImGui frame (the pages below) and renders it into `target`, sized w x h pixels, with
  * SDL_GPU_LOADOP_LOAD -- drawn over whatever is already there, never clearing it. `dt_s`: seconds

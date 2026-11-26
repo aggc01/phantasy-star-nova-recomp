@@ -448,6 +448,7 @@ static void sd_add_row(uint32_t id, uint32_t empty) {
 		if (title_id && !strcmp(title_id, "PCSG00351")) {
 			/* Nova stores UTF-8, including the literal player name. */
 			memcpy(r->sub, p + 0x44, 128);
+			r->can_delete = id < 255;   /* Nova uses slot 255 for system data. */
 		} else {
 			slot_text(p + 0x44, 128, r->sub, sizeof r->sub);
 		}
@@ -660,6 +661,89 @@ void savedlg_answer(int seq, int choice) {
 	pthread_mutex_lock(&sd_mu);
 	if (sd.open && seq == sd.seq && sd.status == ST_RUNNING && sd.sub == ST_RUNNING) sd_answer(choice);
 	pthread_mutex_unlock(&sd_mu);
+}
+
+/* The recovery directory stays on the save filesystem. A
+ * failed marker move puts the payload back before the picker changes. */
+static int nova_archive_save(uint32_t id, char *msg, size_t n) {
+	char root[1024], marker[1024], data[1024], recovery[1152], target_marker[1200], target_data[1200];
+	if (snprintf(root, sizeof root, "%s/deleted_saves", player_save_root()) >= (int)sizeof root ||
+	    snprintf(data, sizeof data, "%s/savedata0/savedata%u.bin", player_save_root(), id) >= (int)sizeof data) {
+		snprintf(msg, n, "The save path is too long.");
+		return -1;
+	}
+	slot_marker(id, marker, sizeof marker);
+	struct stat st;
+	if (stat(marker, &st) || !S_ISREG(st.st_mode)) {
+		snprintf(msg, n, "This slot's metadata is unavailable.");
+		return -1;
+	}
+	const int have_data = stat(data, &st) == 0;
+	if ((have_data && !S_ISREG(st.st_mode)) || (!have_data && errno != ENOENT)) {
+		snprintf(msg, n, "This slot's save file is unavailable.");
+		return -1;
+	}
+	if (mkdir(root, 0755) && (errno != EEXIST || stat(root, &st) || !S_ISDIR(st.st_mode))) {
+		snprintf(msg, n, "Couldn't open the deleted saves folder.");
+		return -1;
+	}
+	const long long stamp = (long long)time(NULL);
+	unsigned attempt = 0;
+	do {
+		snprintf(recovery, sizeof recovery, "%s/slot-%u-%lld-%u", root, id, stamp, ++attempt);
+		if (mkdir(recovery, 0755) == 0) break;
+		if (errno != EEXIST || attempt == 100) {
+			snprintf(msg, n, "Couldn't create a recovery folder.");
+			return -1;
+		}
+	} while (1);
+	snprintf(target_data, sizeof target_data, "%s/savedata%u.bin", recovery, id);
+	snprintf(target_marker, sizeof target_marker, "%s/.slot%u", recovery, id);
+	if (have_data && rename(data, target_data)) {
+		rmdir(recovery);
+		snprintf(msg, n, "Couldn't move this slot's save file.");
+		return -1;
+	}
+	if (rename(marker, target_marker)) {
+		if (have_data && rename(target_data, data)) {
+			snprintf(msg, n, "Couldn't finish deleting. The save file is in %s.", recovery);
+			fprintf(stderr, "    Nova save delete rollback failed: %s\n", recovery);
+			return -1;
+		}
+		rmdir(recovery);
+		snprintf(msg, n, "Couldn't move this slot's metadata.");
+		return -1;
+	}
+	snprintf(msg, n, "Slot %u moved to deleted_saves.", id + 1);
+	fprintf(stderr, "    Nova save slot %u moved to %s\n", id, recovery);
+	return 0;
+}
+
+int savedlg_delete_nova_slot(int seq, uint32_t id, char *msg, size_t n) {
+	pthread_mutex_lock(&sd_mu);
+	int row = 0;
+	while (row < sd.nrows && (sd.rows[row].id != id || !sd.rows[row].can_delete)) row++;
+	int result = -1;
+	if (sd.open && seq == sd.seq && sd.status == ST_RUNNING && sd.sub == ST_RUNNING &&
+	    sd.kind == SAVEDLG_LIST && (sd.disp == 1 || sd.disp == 2) && row < sd.nrows) {
+		result = nova_archive_save(id, msg, n);
+		if (result == 0) {
+			if (sd.disp == 1) {
+				SaveDlgRow *r = &sd.rows[row];
+				memset(r, 0, sizeof *r);
+				r->id = id;
+				snprintf(r->title, sizeof r->title, "New Saved Data");
+			} else {
+				sd.nrows--;
+				memmove(&sd.rows[row], &sd.rows[row + 1], (size_t)(sd.nrows - row) * sizeof sd.rows[0]);
+				if (sd.focus >= sd.nrows) sd.focus = sd.nrows ? sd.nrows - 1 : 0;
+			}
+		}
+	} else {
+		snprintf(msg, n, "That slot is no longer available.");
+	}
+	pthread_mutex_unlock(&sd_mu);
+	return result;
 }
 
 /* ---- trophies: a context and a handle that accept everything */

@@ -876,6 +876,40 @@ static void pad_resync(SDL_Gamepad *pad) {   /* L and R as held now (the menu cl
 	}
 }
 
+/* Keep the same controller in gameplay and the overlay across
+ * startup, hot-plug, and disconnect. The first remaining pad takes over. */
+static SDL_Gamepad *pad_open(SDL_JoystickID preferred) {
+	SDL_Gamepad *pad = preferred ? SDL_OpenGamepad(preferred) : NULL;
+	if (!pad) {
+		int count = 0;
+		SDL_JoystickID *ids = SDL_GetGamepads(&count);
+		for (int i = 0; i < count && !pad; i++) pad = SDL_OpenGamepad(ids[i]);
+		SDL_free(ids);
+	}
+	overlay_set_gamepad(pad);
+	__atomic_store_n(&pad_connected, pad != NULL, __ATOMIC_RELAXED);
+	if (!pad) return NULL;
+
+	int gyro = SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true);
+	int accel = SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);
+	pad_gyro = gyro && accel;
+	const char *name = SDL_GetGamepadName(pad);
+	fprintf(stderr, "gamepad: %s%s%s\n", name ? name : "?", SDL_GetNumGamepadTouchpads(pad) > 0 ? ", touchpad" : "", pad_gyro ? ", gyro" : "");
+	return pad;
+}
+
+/* Ignore events from controllers other than the active pad. */
+static SDL_JoystickID pad_event_id(const SDL_Event *e) {
+	switch (e->type) {
+	case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP: return e->gbutton.which;
+	case SDL_EVENT_GAMEPAD_AXIS_MOTION: return e->gaxis.which;
+	case SDL_EVENT_GAMEPAD_SENSOR_UPDATE: return e->gsensor.which;
+	case SDL_EVENT_GAMEPAD_TOUCHPAD_DOWN: case SDL_EVENT_GAMEPAD_TOUCHPAD_MOTION: case SDL_EVENT_GAMEPAD_TOUCHPAD_UP:
+		return e->gtouchpad.which;
+	default: return 0;
+	}
+}
+
 typedef struct { void *(*fn)(void *); void *arg; } Game;
 static void *game_main(void *p) { Game *g = p; g->fn(g->arg); return 0; }
 
@@ -961,7 +995,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 	  aspect_mode = !strcmp(b, "stretch") ? ASPECT_STRETCH : !strcmp(b, "fill") ? ASPECT_FILL : ASPECT_FIT; }   /* window_set_aspect also saves: read it in directly instead, nothing changed yet */
 	if (settings_int("fullscreen", 0)) SDL_SetWindowFullscreen(win, true);
 	if (gpu) overlay_init(gpu, win, SDL_GetGPUSwapchainTextureFormat(gpu, win));
-	SDL_Gamepad *pad = 0;
+	SDL_Gamepad *pad = pad_open(0);
 	int pad_back = 0, pad_start = 0, pad_combo_latch = 0;
 	uint64_t last_overlay_t = 0;
 	active = 1;
@@ -985,6 +1019,27 @@ void window_run(void *(*fn)(void *), void *arg) {
 			if ((e.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN || e.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN) && settings_int("fullscreen", 0) != (e.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN)) {
 				settings_set_int("fullscreen", e.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN); settings_save();
 			}
+			/* Device handling and Auto input detection also run
+			 * while a host dialog or the full menu owns the controls. */
+			if (e.type == SDL_EVENT_GAMEPAD_ADDED && !pad) pad = pad_open(e.gdevice.which);
+			if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad && SDL_GetGamepadID(pad) == e.gdevice.which) {
+				overlay_set_gamepad(NULL);
+				SDL_CloseGamepad(pad);
+				pad_gyro = 0;
+				motion_lost();
+				gamepad_touch_release();
+				buttons = 0;
+				pad_back = pad_start = pad_combo_latch = 0;
+				pad = pad_open(0);
+			}
+			SDL_JoystickID source = pad_event_id(&e);
+			if (source && (!pad || SDL_GetGamepadID(pad) != source)) continue;
+			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+			    (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e.gaxis.value) > 16000)) {
+				kbm_auto = 0;
+				snprintf(kbm_why, sizeof kbm_why, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? "pad button %d" : "pad axis %d",
+					e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? e.gbutton.button : e.gaxis.axis);
+			}
 			/* the overlay itself: always live, open or not, so it can always be reached and always
 			 * closed. Opening (or re-opening by the same gamepad combo) clears whatever buttons/touch
 			 * were down so the game never sees them as still held on resume. */
@@ -999,9 +1054,14 @@ void window_run(void *(*fn)(void *), void *arg) {
 			/* exclusive while open: the menu gets every key/mouse/gamepad event instead of the game
 			 * (which is paused anyway -- display.c) */
 			if (overlay_is_open()) { overlay_process_event(&e); continue; }
-			/* Dialogs own input, while controller connection events
-			 * still reach the window's device management below. */
-			if (overlay_dialog_active() && e.type != SDL_EVENT_GAMEPAD_ADDED && e.type != SDL_EVENT_GAMEPAD_REMOVED) {
+			/* Dialogs own input. A keyboard press or mouse click
+			 * returns Auto to keyboard/mouse without forwarding that input to Nova. */
+			if (overlay_dialog_active()) {
+				if ((e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) ||
+				    (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.which != SDL_TOUCH_MOUSEID)) {
+					kbm_auto = 1;
+					snprintf(kbm_why, sizeof kbm_why, "dialog keyboard or mouse");
+				}
 				overlay_process_event(&e); continue;
 			}
 			/* closed: ImGui still sees the mouse (and the window's focus/enter/leave), so the menu bar can
@@ -1046,22 +1106,10 @@ void window_run(void *(*fn)(void *), void *arg) {
 					if (dn) { kbm_used(); kbm_auto = 1; snprintf(kbm_why, sizeof kbm_why, "the key %s", SDL_GetKeyName(e.key.key)); }
 				}
 			}
-			if (e.type == SDL_EVENT_GAMEPAD_ADDED && !pad && (pad = SDL_OpenGamepad(e.gdevice.which)) != 0) {
-				__atomic_store_n(&pad_connected, 1, __ATOMIC_RELAXED);
-				/* a DS4/DualSense's gyroscope and accelerometer stream only once asked for (SDL's HIDAPI driver) */
-				int g = SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true);
-				int a = SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL) && SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);
-				pad_gyro = g && a;
-				fprintf(stderr, "gamepad: %s%s%s\n", SDL_GetGamepadName(pad) ? SDL_GetGamepadName(pad) : "?", SDL_GetNumGamepadTouchpads(pad) > 0 ? ", touchpad" : "", pad_gyro ? ", gyro" : "");
-			}
-			if (e.type == SDL_EVENT_GAMEPAD_REMOVED && pad && SDL_GetGamepadID(pad) == e.gdevice.which) { SDL_CloseGamepad(pad); pad = 0; __atomic_store_n(&pad_connected, 0, __ATOMIC_RELAXED); pad_gyro = 0; motion_lost(); gamepad_touch_release(); buttons = 0; for (int i = 0; i < 4; i++) sticks[i] = 128; }
 			if (e.type == SDL_EVENT_GAMEPAD_SENSOR_UPDATE) {
 				if (e.gsensor.sensor == SDL_SENSOR_ACCEL) motion_feed_accel(e.gsensor.data, e.gsensor.sensor_timestamp);
 				else if (e.gsensor.sensor == SDL_SENSOR_GYRO) motion_feed_gyro(e.gsensor.data, e.gsensor.sensor_timestamp);
 			}
-			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && (e.gaxis.value > 16000 || e.gaxis.value < -16000))) {
-				kbm_auto = 0; snprintf(kbm_why, sizeof kbm_why, e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? "pad button %d" : "pad axis %d", e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ? e.gbutton.button : e.gaxis.axis);
-			}   /* the pad in hand: auto's choice */
 			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e.gbutton.button == SDL_GAMEPAD_BUTTON_RIGHT_STICK) motion_recenter();   /* R3 (the Vita has no stick clicks): the gyro's heading becomes straight ahead */
 			if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
 				int dn = e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN, b = e.gbutton.button;
@@ -1098,7 +1146,8 @@ void window_run(void *(*fn)(void *), void *arg) {
 			/* the mouse moved for real over the picture while the pad had the input (auto mode): back to keyboard +
 			 * mouse, so the capture returns at once -- it used to wait for a key, the pointer loose and stopping at
 			 * the window's edges after any touch of the pad (Alt still frees it; a nudge under a few points doesn't count) */
-			if (!rel_on && e.type == SDL_EVENT_MOUSE_MOTION && !overlay_mouse_captured() && settings_int("mouse_look", 1) &&
+			if (!rel_on && e.type == SDL_EVENT_MOUSE_MOTION && now_us() - rel_since_us >= 60000 &&
+			    !overlay_mouse_captured() && settings_int("mouse_look", 1) &&   /* Ignore capture-release warps. */
 			    fabsf(e.motion.xrel) + fabsf(e.motion.yrel) > 3.0f && !(SDL_GetModState() & SDL_KMOD_ALT)) { kbm_auto = 1; snprintf(kbm_why, sizeof kbm_why, "the mouse, not captured"); }
 			if (rel_on && (e.type == SDL_EVENT_MOUSE_MOTION || e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP)) {   /* captured: the look, and R / L */
 				if (e.type == SDL_EVENT_MOUSE_MOTION && now_us() - rel_since_us < 60000) continue;
@@ -1146,9 +1195,8 @@ void window_run(void *(*fn)(void *), void *arg) {
 			if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_RIGHT && mouse_to_touch(e.button.x, e.button.y, 0, &tx, &ty)) { mouse_rear_x = tx; mouse_rear_y = clampi(ty, REAR_Y0, REAR_Y1); mouse_rear_down = 1; }
 			if (e.type == SDL_EVENT_MOUSE_BUTTON_UP && e.button.button == SDL_BUTTON_RIGHT) mouse_rear_down = 0;
 			if (e.type == SDL_EVENT_MOUSE_MOTION && mouse_rear_down && mouse_to_touch(e.motion.x, e.motion.y, 1, &tx, &ty)) { mouse_rear_x = tx; mouse_rear_y = clampi(ty, REAR_Y0, REAR_Y1); }
-			if (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && e.gaxis.axis < 4)
-				sticks[e.gaxis.axis] = (uint8_t)((e.gaxis.value + 32768) >> 8);
 		}
+		const int input_captured = overlay_is_open() || overlay_dialog_active();
 		{	/* keyboard + mouse, once a loop: which scheme, the capture, WASD as the left stick, the look's stand-in */
 			static uint64_t last; uint64_t t = now_us(); double dt = last ? (t - last) / 1e6 : 0; last = t;
 			if (dt > 0.1) dt = 0.1;
@@ -1161,7 +1209,11 @@ void window_run(void *(*fn)(void *), void *arg) {
 			if (on != kbm_on) { extern uint64_t display_frames(void); fprintf(stderr, "    input: %s (%s%s, frame %llu)\n", on ? "keyboard and mouse" : "the controller", strcmp(mode, "auto") ? "Play with: " : "", strcmp(mode, "auto") ? mode : kbm_why[0] ? kbm_why : "start", (unsigned long long)display_frames()); }
 			if (on && !kbm_on && !said) { said = 1; overlay_toast_titled("Keyboard & mouse", "The mouse looks and aims -- hold [Alt] for the cursor\nControls: [F10]", 6.0); }
 			kbm_on = on;
-			int want = (on || (window_raw_look() && !pstv)) && settings_int("mouse_look", 1) && !overlay_is_open() && !overlay_dialog_active() && win && (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) && !(SDL_GetModState() & SDL_KMOD_ALT);
+			/* Sample all four axes when the controller owns the
+			 * sticks. A held axis may not produce a new SDL event on a switch. */
+			if (!on && !input_captured) for (int i = 0; i < 4; i++)
+				sticks[i] = pad ? (uint8_t)((SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)i) + 32768) >> 8) : 128;
+			int want = (on || (window_raw_look() && !pstv)) && settings_int("mouse_look", 1) && !input_captured && win && (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) && !(SDL_GetModState() & SDL_KMOD_ALT);
 			/* SDL's own state, not just ours: the system can drop the capture behind our back (a focus change as
 			 * the window opens, say) and rel_on then claimed a capture that wasn't there -- the pointer showed,
 			 * left the window and stopped tracking at its edge. Re-applied whenever the two disagree. */
@@ -1186,7 +1238,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 			}
 			if (want != rel_on && win) {
 				if (!SDL_SetWindowRelativeMouseMode(win, want) && want) fprintf(stderr, "mouse: capture refused: %s\n", SDL_GetError());
-				if (want) rel_since_us = now_us();   /* (the capture's first motion can carry the pointer's jump to the centre: dropped) */
+				rel_since_us = now_us();   /* SDL may warp the pointer on capture or release. */
 				if (!want) { if (gesture_drag) { gesture_drag = 0; touch_down = 0; } if (twist_drag) { twist_drag = 0; twist_down = twist_pad; } if (kbm_lmb) buttons &= ~RTRIG; if (kbm_rmb) buttons &= ~LTRIG; kbm_lmb = kbm_rmb = 0; __atomic_store_n(&mouse_dx_q8, 0, __ATOMIC_RELAXED); __atomic_store_n(&mouse_dy_q8, 0, __ATOMIC_RELAXED); }
 				rel_on = want;
 			}
@@ -1204,7 +1256,7 @@ void window_run(void *(*fn)(void *), void *arg) {
 				tilt += (want - tilt) * (float)(1.0 - exp(-dt / (on ? 0.12 : 0.06)));   /* (out of a section: back to level) */
 				motion_feed_virtual(tilt, SDL_GetTicksNS());   /* (dropped unless the virtual pad is the source) */
 			}
-			if (on && !overlay_is_open()) {
+			if (on && !input_captured) {   /* Host prompts keep the guest sticks neutral. */
 				int x = kb_binds[KB_MOVE_RIGHT].held - kb_binds[KB_MOVE_LEFT].held, y = kb_binds[KB_MOVE_DOWN].held - kb_binds[KB_MOVE_UP].held;
 				float k = x && y ? 0.7071f : 1.0f;
 				sticks[0] = (uint8_t)lroundf(127.5f + x * k * 127.5f); sticks[1] = (uint8_t)lroundf(127.5f + y * k * 127.5f);
@@ -1356,7 +1408,6 @@ void window_run(void *(*fn)(void *), void *arg) {
 			}
 			if (was_open && !open) {
 				kb_reload();   /* (the Controls page may have rebound keys) */
-				for (int i = 0; i < 4; i++) sticks[i] = pad ? (uint8_t)((SDL_GetGamepadAxis(pad, (SDL_GamepadAxis)i) + 32768) >> 8) : 128;
 				pad_resync(pad);   /* and L and R: one held through the menu sends no new event (the other pair, held through, waits for a new press) */
 			}
 			was_open = open;

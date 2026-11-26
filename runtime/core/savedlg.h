@@ -5,6 +5,7 @@
  */
 #ifndef RECOMP_SAVEDLG_H
 #define RECOMP_SAVEDLG_H
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -17,6 +18,7 @@ enum { SAVEDLG_CANCEL = -1, SAVEDLG_YES = 1, SAVEDLG_NO = 2 };
 typedef struct {
 	uint32_t id;          /* the slot id the game gave */
 	int exists;           /* saved data is there (else a "new saved data" row) */
+	int can_delete;       /* A Nova character slot the PC picker can remove. */
 	char title[100], sub[200], detail[200], date[24];   /* UTF-8; detail's line breaks made separators */
 } SaveDlgRow;
 
@@ -37,6 +39,8 @@ void savedlg_release(void);
 /* the player's answer to step `seq` (an answer to a step that has since moved on is dropped): LIST, a row
  * index or SAVEDLG_CANCEL; YESNO, SAVEDLG_YES, SAVEDLG_NO or SAVEDLG_CANCEL */
 void savedlg_answer(int seq, int choice);
+/* Archive one slot and refresh the current PC list without answering the guest. */
+int savedlg_delete_nova_slot(int seq, uint32_t id, char *message, size_t size);
 
 #ifdef __cplusplus
 }
