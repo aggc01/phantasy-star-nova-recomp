@@ -16,6 +16,11 @@ ZLIB=1.3.1
 ZLIB_SHA=9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
 FFMPEG=7.1.1
 FFMPEG_SHA=733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1
+# Windows host only: a prebuilt FFmpeg command-line program (Gyan Doshi's unmodified 6.1.1 "essentials" build, GPLv3, with
+# libx264), unpacked into $D/ffmpeg-cli. The decoders above can't encode; a game pack's localization (Phantasy Star Nova's
+# English movie subtitles, packs/PCSG00351/english) re-encodes the game's movies with it. Source: ffmpeg.org's n6.1.1.
+FFMPEG_CLI=6.1.1
+FFMPEG_CLI_SHA=742e32fc9f92681f9f254b925e1b613fdd8074ba40749d4879aefdb009b94cc5
 D=${ATIV_WIN_TOOLCHAIN:-$HOME/toolchains/ativ-win}
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*) ASSET=${LLVM_MINGW_ASSET:-llvm-mingw-$LLVM_MINGW-ucrt-x86_64.zip}; ASSET_SHA=${LLVM_MINGW_ASSET_SHA:-317492c456aa27ee607a5919f1d2d38dcdc1112516a24d0bf4b00d078f52d17a}; HOSTED_WIN=1 ;;
@@ -30,7 +35,13 @@ fetch "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_MINGW/$ASS
 fetch "https://github.com/libsdl-org/SDL/releases/download/release-$SDL/SDL3-devel-$SDL-mingw.tar.gz" "SDL3-devel-$SDL-mingw.tar.gz" "$SDL_SHA"
 fetch "https://github.com/madler/zlib/releases/download/v$ZLIB/zlib-$ZLIB.tar.gz" "zlib-$ZLIB.tar.gz" "$ZLIB_SHA"
 fetch "https://ffmpeg.org/releases/ffmpeg-$FFMPEG.tar.xz" "ffmpeg-$FFMPEG.tar.xz" "$FFMPEG_SHA"
+[[ ${HOSTED_WIN:-} ]] && fetch "https://github.com/GyanD/codexffmpeg/releases/download/$FFMPEG_CLI/ffmpeg-$FFMPEG_CLI-essentials_build.zip" "ffmpeg-$FFMPEG_CLI-essentials_build.zip" "$FFMPEG_CLI_SHA"
 cd "$D"
+if [[ ${HOSTED_WIN:-} && ! -f ffmpeg-cli/ffmpeg.exe ]]; then
+  rm -rf ffmpeg-cli-tmp; mkdir ffmpeg-cli-tmp
+  unzip -q "dl/ffmpeg-$FFMPEG_CLI-essentials_build.zip" "*/bin/ffmpeg.exe" "*/LICENSE" "*/README.txt" -d ffmpeg-cli-tmp
+  rm -rf ffmpeg-cli; mv ffmpeg-cli-tmp/ffmpeg-$FFMPEG_CLI-essentials_build ffmpeg-cli; mv ffmpeg-cli/bin/ffmpeg.exe ffmpeg-cli/; rmdir ffmpeg-cli/bin; rm -rf ffmpeg-cli-tmp
+fi
 if [[ ! -d llvm-mingw ]]; then
   if [[ $ASSET == *.zip ]]; then unzip -q "dl/$ASSET"; mv "${ASSET%.zip}" llvm-mingw; else tar xf "dl/$ASSET"; mv "${ASSET%.tar.xz}" llvm-mingw; fi
 fi
@@ -58,4 +69,4 @@ if [[ ! -f ffmpeg/lib/libavcodec.a ]]; then
     && rm -rf ffmpeg && cp -r "$B/out" ffmpeg
   rm -rf "$B"
 fi
-echo "toolchain: $D ($("$CC" --version | head -1); SDL3 $SDL; zlib $ZLIB; FFmpeg $FFMPEG $([[ -f ffmpeg/lib/libavcodec.a ]] && echo built || echo MISSING))"
+echo "toolchain: $D ($("$CC" --version | head -1); SDL3 $SDL; zlib $ZLIB; FFmpeg $FFMPEG $([[ -f ffmpeg/lib/libavcodec.a ]] && echo built || echo MISSING)$([[ ${HOSTED_WIN:-} ]] && { [[ -f ffmpeg-cli/ffmpeg.exe ]] && echo "; ffmpeg.exe $FFMPEG_CLI" || echo "; ffmpeg.exe MISSING"; }))"

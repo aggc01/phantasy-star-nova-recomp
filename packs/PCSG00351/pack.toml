@@ -22,6 +22,9 @@ REPATCH_KEEP = "NOVA_FileList_Vita_patch.cpk:tex_nova_ui_common.aif"
 # REPATCH = "off": Japanese game only (my decision 2026-11-18 evening); import skips repatch0 (same as RECOMP_NO_REPATCH=1)
 # and REPATCH_KEEP above is moot. Our own files (overlay0\, same layout as app0) are layered instead: vitarecomp.py cmd_import.
 REPATCH = "off"
+# LOCALIZE: the English localization (english/localize.py), built from your copy after the build: the text, UI art and
+# movie subtitles in English, the burned-in Japanese subtitles removed. F10 > Language switches back to the original.
+LOCALIZE = "english/localize.py"
 TEST_FRAMES = 1200
 TEST_TIMEOUT = 600
 

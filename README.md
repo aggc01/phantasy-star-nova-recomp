@@ -24,9 +24,9 @@ You bring your own copy of the game. Nothing of the game ships in this repositor
 ## Status
 
 **Beta.** In testing on Windows 11, the game runs through character creation, gameplay, movies, saving and loading.
-An English localization exists, but its
-text and subtitle data are not in this repository yet, so a build from this repository plays the **Japanese** game
-(see [English](#english)). Known issues are tracked in [docs/psnova/README.md](docs/psnova/README.md).
+Setup builds an **English localization** from your copy: menus, dialogue, UI art and movie subtitles, with the
+Japanese subtitles burned into the movies removed (see [English](#english)). Known issues are tracked in
+[docs/psnova/README.md](docs/psnova/README.md).
 
 ## What you need
 
@@ -37,13 +37,15 @@ text and subtitle data are not in this repository yet, so a build from this repo
 | The game | *Phantasy Star Nova*, Japan, title ID `PCSG00351`: the **1.00** base game and the official **1.05** update, as PKG files or as folders copied from a Vita (`ux0:app/PCSG00351`, `ux0:patch/PCSG00351`) |
 | The game's licence | `work.bin` or a `.rif` file for your copy. In a game folder copied from a Vita it is `sce_sys\package\work.bin` |
 | Vita system software | `PSVUPDAT.PUP` 3.74, from [PlayStation's download page](https://www.playstation.com/en-us/support/hardware/psvita/system-software/) |
+| For English | The font [Glenth Regular](https://elements.envato.com/glenth-classic-display-serif-font-9ZK6SWW) by OWPictures (`glenthregular.ttf`). It is not free to share, so it is not included: you need your own copy |
 
-Other regions and versions are not supported. Use an unmodified copy.
+Other regions and versions are not supported. Use an unmodified copy. A copy that already carries a fan translation
+works too: setup removes the fan translation and applies this one, with a few limits (see [English](#english)).
 
 ## Setup
 
 Run these from PowerShell in the folder where you want the project, unless a step says Git Bash. Setup takes about
-25 minutes in all, most of it the first build; after that the game starts in seconds.
+40 minutes in all, most of it the first build and the English; after that the game starts in seconds.
 
 **1. Get the code, its Python packages and a folder for your game library.**
 
@@ -58,14 +60,14 @@ New-Item -ItemType Directory dump
 The `dump` folder is where the decrypted game, the build and your saves go. Create it before step 3: without it,
 everything goes to a shared folder in `%LOCALAPPDATA%\ProjectNativ` on your C: drive instead.
 
-**2. Install the compiler toolchain** (Clang for Windows, SDL3, zlib and FFmpeg's decoders, at pinned versions). Open
-**Git Bash** in the project folder:
+**2. Install the compiler toolchain** (Clang for Windows, SDL3, zlib, FFmpeg's decoders, and an FFmpeg program
+that re-encodes the movies for English, all at pinned versions). Open **Git Bash** in the project folder:
 
 ```bash
 ATIV_WIN_TOOLCHAIN="$PWD/toolchain" bash runtime/platform/win/setup-toolchain.sh
 ```
 
-This downloads about 190 MB and builds into `toolchain\` (about 1 GB), where the build looks for it. It takes about
+This downloads about 280 MB and builds into `toolchain\` (about 1.1 GB), where the build looks for it. It takes about
 5 minutes.
 
 **3. Prepare the Vita system software.** The game needs some of Sony's system modules, which are taken from the
@@ -75,8 +77,13 @@ firmware file you downloaded:
 .\.venv\Scripts\python.exe pipeline\vitarecomp.py firmware "C:\path\to\PSVUPDAT.PUP"
 ```
 
-**4. Add the game, then its update.** The first command decrypts and keeps the base game. The second adds the 1.05
-update and then builds everything: import, analysis, recompilation and compilation. The build takes about 15 minutes.
+**4. Add the English font.** Copy your `glenthregular.ttf` into `packs\PCSG00351\english\fonts\`. Git ignores
+fonts there, so it is never committed. Without it the game still builds, in Japanese, and the next step tells you what
+is missing.
+
+**5. Add the game, then its update.** The first command decrypts and keeps the base game. The second adds the 1.05
+update and then builds everything: import, analysis, recompilation and compilation (about 15 minutes), then the
+English localization (about 15 minutes).
 
 ```powershell
 .\.venv\Scripts\python.exe pipeline\vitarecomp.py add "C:\path\to\base-game.pkg" --license "C:\path\to\work.bin" --no-build
@@ -85,12 +92,19 @@ update and then builds everything: import, analysis, recompilation and compilati
 
 Instead of PKG files you can give the game folders copied from a Vita: `...\app\PCSG00351` for the base game and
 `...\patch\PCSG00351` for the update. If your game is in a ZIP, unpack it first. Your files are only read. The build
-ends with a line starting `built` and the path of `game_host.exe`.
+prints a line starting `built` and the path of `game_host.exe`, and the English ends with
+`English localization ready`.
 
 PowerShell shows some of the tools' notes in red, for example one about `sce_sys\about\right.suprx` being skipped.
 That note is expected: the file is not part of the game's code. A step has worked if it ends without an error message.
 
-**5. Play.** Double-click **`Play Phantasy Star Nova.bat`**.
+If you add the font later, or the English stopped for another reason, build only the English with:
+
+```powershell
+.\.venv\Scripts\python.exe pipeline\vitarecomp.py localize PCSG00351
+```
+
+**6. Play.** Double-click **`Play Phantasy Star Nova.bat`**.
 
 To rebuild after changing the code, run `bash dev/psn_build_all.sh` from Git Bash. It runs the import, analyze,
 recompile and build stages again and writes a log for each to `dev/psn-logs/`.
@@ -125,22 +139,45 @@ Back up your saves from **F10 → Saves** before trying anything risky.
 
 ## English
 
-The English localization covers menus, dialogue, UI art and movie subtitles, with some lines still in Japanese. It is
-built as an overlay on the Japanese game: the original archives stay untouched, and **F10 → Game → Language** switches
-between English and the original Japanese.
+The English localization covers menus, dialogue, names, UI art and movie subtitles, with some lines still in
+Japanese. It lives in [`packs/PCSG00351/english/`](packs/PCSG00351/english/localize.py) as recipes: the English text,
+instructions for redrawing each UI image, and subtitle timings, each tied to the SHA-256 of the original file it
+applies to. No game file is in the repository. On your PC, step 5 (or `vitarecomp localize PCSG00351`):
 
-The tools that build it are in this repository (`dev/psnova/rmdtext/`, `dev/psnova/uitex/` and the movie subtitle
-scripts in `dev/psnova/`). The translated text and subtitle data they read are not published here yet. Until they
-are, a build from this repository plays in Japanese.
+1. checks that your game and update archives are the unmodified Japanese originals;
+2. writes the English messages and redrawn UI images into a copy of the update's archive;
+3. removes the Japanese subtitles burned into the story movies, frame by frame, and draws English subtitles in their
+   place;
+4. puts both archives in `dump\decrypted\PCSG00351\lang\en` and makes English the starting language.
+
+Your original archives stay untouched. **F10 → Game → Language** switches between English and the original Japanese
+at any time. A later run only rebuilds what changed.
+
+If your copy already carries a fan translation (such as Arks-Layer's English patch, often found merged into a
+"v1.05 English" copy), step 5 removes it and builds this English in its place:
+
+- the update's archive is rebuilt from the untouched base game, so none of the fan's text is left;
+- the story movies, which the fan translation re-encoded with its English under the Japanese line, have both lines
+  erased before the English subtitles are drawn;
+- the opening warning screen, which the fan translation turns into its credits, is drawn again in English.
+
+A fan copy no longer holds everything the original had. One UI texture is gone, so some screens can show noise.
+Eight lines that this English leaves untranslated show the base game's older Japanese wording. The story movies
+start from the fan's lower-quality re-encode. Step 5 says so when it runs. For the full result, use an unmodified
+Japanese copy.
 
 ## Troubleshooting
 
 | Problem | What to do |
 | --- | --- |
 | `no Windows toolchain at …` | Run step 2 again, and check that `toolchain\llvm-mingw` exists. |
-| The firmware or the game went to `%LOCALAPPDATA%\ProjectNativ` | The `dump` folder was missing. Create it (step 1) and run steps 3 and 4 again. |
+| The firmware or the game went to `%LOCALAPPDATA%\ProjectNativ` | The `dump` folder was missing. Create it (step 1) and run steps 3 and 5 again. |
 | `Python not found` when starting the game | Create `.venv` as in step 1. |
-| The update is refused or asks for a licence | Add the base game first (step 4), with its `work.bin` or `.rif`. |
+| The update is refused or asks for a licence | Add the base game first (step 5), with its `work.bin` or `.rif`. |
+| `English localization: … needs the Glenth Regular font` | Copy `glenthregular.ttf` into `packs\PCSG00351\english\fonts\` (step 4), then run `vitarecomp localize PCSG00351`. |
+| `English localization: this copy carries a fan translation` | Expected with a fan-translated copy: the fan translation is removed and this English applied, with the limits the message lists. For the full result, add an unmodified copy (step 5). |
+| `… is not the original Japanese base game archive` | The base game itself is modified. Add an unmodified copy (step 5). |
+| The game is in Japanese after setup | Check the end of step 5's output for a line starting `English localization`, which says what stopped it. |
 | A stage fails during the build | Read its log in `dev/psn-logs/`, or the command's output. Most failures name the file or setting at fault. |
 | Black screen or crash at start | Update your GPU driver. Check `session.log` for the last lines before the problem. |
 
@@ -163,6 +200,7 @@ recompiler and runtime in depth.
 | Path | What's in it |
 | --- | --- |
 | `packs/PCSG00351/` | The game pack: supported versions, code hooks, function seeds and shader recipes |
+| `packs/PCSG00351/english/` | The English localization: text, UI and subtitle recipes, and the scripts that build them |
 | `recompiler/` | The static recompiler (ARM to C) |
 | `runtime/` | What the recompiled game runs on: kernel and libraries, graphics, audio, input, UI |
 | `pipeline/` | `vitarecomp.py`, the driver for every stage |
@@ -190,3 +228,7 @@ leaves it.
 
 Built on [Project Nativ](https://github.com/TheLostPantheon/nativ). To support Nativ itself, see its
 [Ko-fi](https://ko-fi.com/kingtorro).
+
+The English text started from Arks-Layer's fan translation of *Phantasy Star Nova* and was revised and extended for
+this project. Glenth Regular is by OWPictures. The movie subtitles are encoded with
+[FFmpeg](https://ffmpeg.org/), using Gyan Doshi's Windows build.

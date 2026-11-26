@@ -1,0 +1,1294 @@
+{
+  "credit": "Opening announcement wording written for this localization. Story English text and subtitle timing from the Nova English localization.",
+  "stories": {
+    "MP00_000_000": {
+      "sha256": "5f9e0cc093700b8b1eae8949ae92b5b35e5101952ef6c0f3d818afd7d6a32bb9",
+      "top": 470,
+      "bottom": 497,
+      "threshold": 350,
+      "frames": 3407,
+      "expected_lines": 27,
+      "presence_bits": "0000000000000000000000001fffffff80001fffffffffffffffffffffffffffffffffffffe00000000001ffffffffffffffffffffffffffff001ffffffffffffffffffffffffffffffffffffffffe01ffffffffffffffffe00001fffffffffffffffffffffffffffffffffffffff800003fffffffffffffffffffffffffffc000000000000003fffffffffffffffffffffffffffffff0003ffffffffffffffffffffffffffe00000000000000001ffffffffffffffffffffffffffffff001ffffffffffffffffffffffffffffffffffffffff0000000000000007fffffffffffffffffffffff80000001fffffffffffffffff0000000003ffffffffffffffffc0000000fffffffffffffffffe00000000003ffffffffffffffffffffffffffffffffffffffff8000000fffffffffffffffffffffffffffffffffffffffffffffe01fffffffffffffffffffffffffffffff000fffffffffffffffc00007fffffffffffffffffffffffffffffffffffffffffffc0000003fffffffffffffffffffffff00ffffffffffffffffffffffffffffffc0001fffffffffffffffffffffff0000000000000000000",
+      "cues": {
+        "0": "",
+        "1": "",
+        "2": "Oracle.",
+        "3": "A vast fleet roaming freely between planets.",
+        "4": "",
+        "5": "ARKS, a force formed within Oracle,",
+        "6": "lands on the countless planets it finds wherever it goes",
+        "7": "and surveys them for the sake of peace in the universe.",
+        "8": "An absolute evil that threatens the peace\nof the whole universe: the Darkers.",
+        "9": "Wiping them out is ARKS's greatest purpose.",
+        "10": "No one else can exterminate the Darkers.",
+        "11": "Only ARKS, who wield photons, can do it.",
+        "12": "To keep the whole universe from being\nengulfed by the Darkers' darkness,",
+        "13": "ARKS traveled from star to star,\nfighting on day after day.",
+        "14": "ARKS is made up of three races.",
+        "15": "",
+        "16": "Humans, who excel in balance;",
+        "17": "Newmans, skilled at handling photons;",
+        "18": "and Casts, with their sturdy bodies.",
+        "19": "By supporting and working with each other,\nthey make ARKS what it is.",
+        "20": "And now, the exploration ship of Alter,\nARKS's advance team, has left the fleet",
+        "21": "and set course for a certain planet\non a new survey.",
+        "22": "It was a planet that allowed no direct warp link,\nmuch of it shrouded in mystery.",
+        "23": "Does the shadow of the Darkers lie there...",
+        "24": "",
+        "25": "or does an unprecedented threat lurk...",
+        "26": "...No one knows yet."
+      },
+      "spans": [
+        [
+          6,
+          47,
+          381,
+          853
+        ],
+        [
+          37,
+          106,
+          187,
+          862
+        ],
+        [
+          96,
+          141,
+          421,
+          538
+        ],
+        [
+          140,
+          310,
+          218,
+          740
+        ],
+        [
+          295,
+          363,
+          0,
+          726
+        ],
+        [
+          349,
+          463,
+          229,
+          742
+        ],
+        [
+          462,
+          573,
+          240,
+          718
+        ],
+        [
+          575,
+          695,
+          277,
+          680
+        ],
+        [
+          724,
+          902,
+          180,
+          766
+        ],
+        [
+          902,
+          1034,
+          242,
+          717
+        ],
+        [
+          1088,
+          1212,
+          241,
+          727
+        ],
+        [
+          1211,
+          1344,
+          157,
+          812
+        ],
+        [
+          1392,
+          1525,
+          216,
+          740
+        ],
+        [
+          1524,
+          1700,
+          217,
+          753
+        ],
+        [
+          1744,
+          1868,
+          229,
+          739
+        ],
+        [
+          1857,
+          1881,
+          164,
+          276
+        ],
+        [
+          1878,
+          1957,
+          128,
+          685
+        ],
+        [
+          1980,
+          2067,
+          140,
+          867
+        ],
+        [
+          2077,
+          2174,
+          71,
+          851
+        ],
+        [
+          2191,
+          2358,
+          98,
+          860
+        ],
+        [
+          2382,
+          2574,
+          110,
+          851
+        ],
+        [
+          2569,
+          2803,
+          52,
+          945
+        ],
+        [
+          2788,
+          2995,
+          63,
+          946
+        ],
+        [
+          2980,
+          3096,
+          52,
+          946
+        ],
+        [
+          3081,
+          3110,
+          60,
+          945
+        ],
+        [
+          3095,
+          3221,
+          53,
+          813
+        ],
+        [
+          3231,
+          3345,
+          290,
+          667
+        ]
+      ]
+    },
+    "MP00_000_010": {
+      "sha256": "d7f8dca7a8e16871d98bcabb6d6bee63172d978bd03c7dfcb1a58ef96cbc217b",
+      "top": 472,
+      "bottom": 499,
+      "threshold": 350,
+      "frames": 1551,
+      "expected_lines": 10,
+      "presence_bits": "0000000000000000000000000000000000000000000000000000000000000000000000000007ffffffff000000000fffffffffffffffffffffffff8000000000000003fffffffffffffffffffffff800000007ffffffe0000000000000fffffffffffff00000000000000001fffffffffffffffffffffffffffc0000000000001ffffe00000000000000ffffffffffffffffffffffffc3fffffff0007ffffffffffffffffffffffffffffffffe000000000000000000000000000000000000000000",
+      "cues": {
+        "0": "\"Please...\"",
+        "1": "\"Save my planet...\"",
+        "2": "Is no one coming to help you?",
+        "3": "\"That's right...\"",
+        "4": "Are you waiting for me?",
+        "5": "\"Will you find me?\"",
+        "6": "Yeah.",
+        "7": "I promise. I'll come find you, no matter what.",
+        "8": "And then...",
+        "9": "I'll become a hero for you, and you alone!"
+      },
+      "spans": [
+        [
+          295,
+          341,
+          401,
+          559
+        ],
+        [
+          366,
+          478,
+          353,
+          607
+        ],
+        [
+          528,
+          634,
+          313,
+          640
+        ],
+        [
+          651,
+          700,
+          424,
+          535
+        ],
+        [
+          738,
+          801,
+          360,
+          592
+        ],
+        [
+          857,
+          979,
+          292,
+          667
+        ],
+        [
+          1017,
+          1056,
+          462,
+          501
+        ],
+        [
+          1098,
+          1207,
+          324,
+          633
+        ],
+        [
+          1204,
+          1237,
+          422,
+          653
+        ],
+        [
+          1243,
+          1388,
+          228,
+          721
+        ]
+      ]
+    },
+    "MP00_010_050": {
+      "sha256": "3b40340bff19c944b6330b4d8685398d2e7b8ccf0e08c88549255a8935edc15e",
+      "top": 470,
+      "bottom": 496,
+      "threshold": 350,
+      "frames": 4028,
+      "expected_lines": 31,
+      "presence_bits": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000fffffffffffffffffffffffffffffffff8000003ffffffffffffffffc0000000000007fffffffffffff80000fffffffffffffffffffffff8000000000000ffffffffffe001fffffcfffffffffffffffffffffffffffe00000fffffffffffffffffff00000000000003fffffffffffffffffffffffffffe000000001fffff00007fffff8000000fffffffc000000000000000000fffffffffe0001fffffffc0000000003fffffffff807fffffffff00000003fffffff003ffffffffffff800007fffffffffff8000003fffffffe00000007ffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000007ffffe1fffffffffffffffffffffffffffff000003ffffffffffffffffffffffffffffe07ffffffffff000001fffffffc03fffffffffffffff0007fffffffffffffe00fffffffffffffffe00000fffffffffffffffffffffffffffffffffffffc00003fffffffffffffffffff000007fffffffffffffffff00000000007fffffffffffffffe000007fffff00001ffffffffffffffffffffffffff803fffffffffffffffffffffffc0000000000000000000000000000000000000000000000000000000000000000",
+      "cues": {
+        "0": "All crew: this ship will now make an\nemergency landing on planet Machia.",
+        "1": "Everyone, brace for impact.",
+        "2": "Sub-drives to maximum output.",
+        "3": "Attitude control! Set the atmospheric\nentry angle!",
+        "4": "The angle's too steep! Correct it!",
+        "5": "",
+        "6": "Not enough power! We can't hold attitude\nand angle much longer...!",
+        "7": "Sub-drive output dropping further!",
+        "8": "At this speed, even if we clear the\natmosphere, we'll slam into the ground!",
+        "9": "Ngh... Is there nothing we can do...?",
+        "10": "Slow us down!",
+        "11": "There's no other choice...!",
+        "12": "Over there!",
+        "13": "Vice Captain Raven, what are you doing?!",
+        "14": "Divert all energy to the bow shields!",
+        "15": "Just for a moment... hold together...",
+        "16": "Impact incoming!!",
+        "17": "Is everyone all right?",
+        "18": "I wouldn't call this \"all right\"...\nnot in this situation.",
+        "19": "Engine room reports the photon drive\nhas stopped completely.",
+        "20": "What is going on...? Speed up the investigation.",
+        "21": "I'll take charge of finding the cause.",
+        "22": "If the drive isn't restored,\nthe whole ship will shut down.",
+        "23": "But we must prepare for the worst.",
+        "24": "Yes. To keep everyone alive, we'll have to\ndeal with this planet for a while.",
+        "25": "Kisara, gather everyone who can move.",
+        "26": "Our battle with this planet begins now!",
+        "27": "Yes, sir! All hands: combat units,\nprepare to sortie!",
+        "28": "Beginning survey and patrol\nof the area around the ship!",
+        "29": "",
+        "30": ""
+      },
+      "spans": [
+        [
+          387,
+          533,
+          169,
+          790
+        ],
+        [
+          546,
+          614,
+          350,
+          607
+        ],
+        [
+          662,
+          730,
+          349,
+          608
+        ],
+        [
+          734,
+          834,
+          301,
+          649
+        ],
+        [
+          881,
+          975,
+          313,
+          637
+        ],
+        [
+          960,
+          981,
+          326,
+          756
+        ],
+        [
+          966,
+          1079,
+          194,
+          757
+        ],
+        [
+          1096,
+          1177,
+          289,
+          661
+        ],
+        [
+          1220,
+          1339,
+          172,
+          781
+        ],
+        [
+          1377,
+          1445,
+          364,
+          593
+        ],
+        [
+          1467,
+          1505,
+          421,
+          529
+        ],
+        [
+          1567,
+          1610,
+          374,
+          577
+        ],
+        [
+          1622,
+          1659,
+          422,
+          529
+        ],
+        [
+          1699,
+          1785,
+          305,
+          649
+        ],
+        [
+          1809,
+          1898,
+          264,
+          661
+        ],
+        [
+          1935,
+          2027,
+          301,
+          633
+        ],
+        [
+          2065,
+          2122,
+          372,
+          553
+        ],
+        [
+          2429,
+          2459,
+          421,
+          509
+        ],
+        [
+          2455,
+          2578,
+          253,
+          682
+        ],
+        [
+          2589,
+          2714,
+          204,
+          730
+        ],
+        [
+          2715,
+          2820,
+          277,
+          659
+        ],
+        [
+          2820,
+          2890,
+          325,
+          610
+        ],
+        [
+          2909,
+          3037,
+          114,
+          826
+        ],
+        [
+          3047,
+          3126,
+          265,
+          667
+        ],
+        [
+          3129,
+          3304,
+          87,
+          870
+        ],
+        [
+          3316,
+          3399,
+          302,
+          658
+        ],
+        [
+          3433,
+          3508,
+          328,
+          625
+        ],
+        [
+          3519,
+          3669,
+          255,
+          673
+        ],
+        [
+          3675,
+          3773,
+          252,
+          697
+        ],
+        [
+          3791,
+          3823,
+          0,
+          686
+        ],
+        [
+          3812,
+          3853,
+          0,
+          683
+        ]
+      ]
+    },
+    "MP06_030_040": {
+      "sha256": "68161cd1498c028ba2b9754a03899d3f4323dcf3cdd8273527ad433d691b9509",
+      "top": 470,
+      "bottom": 497,
+      "threshold": 350,
+      "frames": 867,
+      "expected_lines": 9,
+      "presence_bits": "00000000003fffffff81ffffffffffffe0000000000000000000007fff000ffffffffff80000001ffffffffe0000ffffffffc00000000000003ffffffffffffffffff8007fffffff87fffffffffc0000000007fffffffffffffffc000000000000000000000000000000000000",
+      "cues": {
+        "0": "Altitude rising.",
+        "1": "All right! Looks like we'll make it!",
+        "2": "Wait, anti-air fire from the ground!",
+        "3": "Those damn Gigantes!",
+        "4": "What about the shield?",
+        "5": "Shield deployed and functioning normally.",
+        "6": "Yes!",
+        "7": "With this, we can make it!",
+        "8": "Almost out of the atmosphere!"
+      },
+      "spans": [
+        [
+          38,
+          81,
+          433,
+          526
+        ],
+        [
+          73,
+          139,
+          350,
+          601
+        ],
+        [
+          215,
+          289,
+          118,
+          729
+        ],
+        [
+          320,
+          360,
+          361,
+          565
+        ],
+        [
+          365,
+          397,
+          411,
+          545
+        ],
+        [
+          453,
+          546,
+          291,
+          670
+        ],
+        [
+          540,
+          584,
+          422,
+          529
+        ],
+        [
+          580,
+          629,
+          376,
+          577
+        ],
+        [
+          655,
+          736,
+          313,
+          637
+        ]
+      ]
+    },
+    "MP06_030_050": {
+      "sha256": "638d4c02b2460991eaa48fe889c013f7b2fc9a404a3b40aeb17335fd170e0130",
+      "top": 470,
+      "bottom": 497,
+      "threshold": 350,
+      "frames": 999,
+      "expected_lines": 7,
+      "presence_bits": "000000000000000000000003fffffffffffff807fffffffffffffffffc00000000000000007fffff00000000000000000000000000000000000000000000000000000001fffff00000007ffffffffe00000000ffffe0ffffffffffffffffffc00003ffffff807ffffffffc000000000000000000000000000000000000",
+      "cues": {
+        "0": "We'll reach orbit shortly.",
+        "1": "Hm? What is that?",
+        "2": "Is it... watching this ship?!",
+        "3": "What is this?!",
+        "4": "Captain! A Gran stream is coming at us!",
+        "5": "",
+        "6": "What?! Deploy the shield!"
+      },
+      "spans": [
+        [
+          90,
+          246,
+          315,
+          645
+        ],
+        [
+          232,
+          328,
+          374,
+          581
+        ],
+        [
+          523,
+          632,
+          10,
+          641
+        ],
+        [
+          652,
+          697,
+          0,
+          533
+        ],
+        [
+          682,
+          768,
+          252,
+          697
+        ],
+        [
+          753,
+          786,
+          133,
+          959
+        ],
+        [
+          778,
+          863,
+          312,
+          637
+        ]
+      ]
+    },
+    "MP06_030_070": {
+      "sha256": "2253ba524408f1013628f86cc094379c8fd4e4b23f2732c5872ea017ca266333",
+      "top": 470,
+      "bottom": 497,
+      "threshold": 350,
+      "frames": 2128,
+      "expected_lines": 12,
+      "presence_bits": "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001fffffffc00000003fffffffffffffffff800000000000000000000000000000000000000003fffffffffffffffffffffffffe0000000000000000000000000000000000000007fffffffffe0001fffffffffc01ffffffffffffffffff0000000000000000000000000000000000000000001ffffffffffffc0000000000000fffffffffffffffffffff00000000000000000000000000000000000000000000000000007ffffffffffffffffffffffffffffffffffffffffc000000000000000000000000000000000000000000000000000000000000000000000",
+      "cues": {
+        "0": "You bastard...",
+        "1": "So it was you who did this?!",
+        "2": "",
+        "3": "",
+        "4": "You won't touch my comrades!\nYou damned eyeball!!",
+        "5": "",
+        "6": "Not yet!!",
+        "7": "My life! Come and take it if you can!",
+        "8": "Is that all you've got?!",
+        "9": "You're all size and no bite!",
+        "10": "Oraaaaaaaaaaaaah!!",
+        "11": ""
+      },
+      "spans": [
+        [
+          377,
+          414,
+          422,
+          537
+        ],
+        [
+          435,
+          512,
+          314,
+          637
+        ],
+        [
+          594,
+          641,
+          303,
+          862
+        ],
+        [
+          633,
+          674,
+          7,
+          869
+        ],
+        [
+          673,
+          779,
+          282,
+          667
+        ],
+        [
+          764,
+          793,
+          14,
+          648
+        ],
+        [
+          935,
+          981,
+          423,
+          529
+        ],
+        [
+          989,
+          1122,
+          236,
+          715
+        ],
+        [
+          1281,
+          1338,
+          410,
+          541
+        ],
+        [
+          1388,
+          1474,
+          302,
+          649
+        ],
+        [
+          1690,
+          1825,
+          218,
+          733
+        ],
+        [
+          1918,
+          2096,
+          172,
+          959
+        ]
+      ]
+    },
+    "MP09_040_040": {
+      "sha256": "24fe19b0b4e9d1fd082293352e4ba67edefb002a8b5b72f19fe72c1605268197",
+      "top": 464,
+      "bottom": 491,
+      "threshold": 700,
+      "frames": 8037,
+      "expected_lines": 53,
+      "presence_bits": "000000003fffffffffc000000000000000000001fffffffffc00000007fffffffffffffffffffe7fffff80000fffffffffffffffc00ffffffc000000007ffffffffffffffffffffffffffffffffffffc000000000001ffffffffe0001ffffffffffffffffc00000003fffffffffff00000007fffffffffffffff000000000000000fffffffffffffffffffffffffffff0000000003fffffffffffffffffffffffffffff80000000000000000ffffff0000000000003fffffffffffffffffffe00000000000000000fffffffffe00003fffffff800000000000007ffffffffff800000000000000000003ffffffffff00001fffffffffff8000000000000fffffffffffffffffffffffc000000000000000000000000000000000000000000ffff01ffffffe003ffffff0000000003ffffffffffffffffe00000000fffffffffffff800000000000000000001ffffffffffffffffffffffff000000ffffffffffffffffc01fffffffff00000000000003ffffffffffffffffffffffffc0000003fffffffffffffffffff000000000000000000000000000000000000000000000000000000000000000000001fffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000003fffffffffffffffffffffffc0000fffffffffffff80000000000000000000000000000000000000000000000000000000000000000000000000000000000007fffffe000000007ffffffffffff803fffffffffe0001fffffffffffffffffffe000000000fffffffffffc000000001fffffffffffffffc000001ffffffffffffffffffffffffffc0000007fffffffffffff800003ffffffffffffffffffe00000007ffffffffffffffffffffffffffffffffffffffffffffffffe0000001fffffffffffff000000000003ffffffffffffffffff800000000ffffffffffffffffff800003fffffffffffffffffffffffffffffffffffffffffff800000003fffffffffffffffffff801ffffffffffffe0000000000007ffffffffffffff80000fffffffffffffffffffffffffffffff800000000000000000000000000000ffff000000007fffffff00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000fff8000000000000ffffffffffffffffffc00001ffffffffffffffffffc00000000000000000000000000000000000000000000000000000000000000000000000000003ffffffffffffffffe000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "cues": {
+        "0": "We did it!!",
+        "1": "",
+        "2": "",
+        "3": "Her back... No way!!",
+        "4": "What!?",
+        "5": "",
+        "6": "The reason Raven refused\nJuno's mission was...!",
+        "7": "For Juno's sake...?",
+        "8": "No! That's not okay!!",
+        "9": "Stopping Nova and its kin\nis my mission.",
+        "10": "It is the last wish of the people\nwho lived on this planet.",
+        "11": "And besides...",
+        "12": "I want to help all of you.",
+        "13": "",
+        "14": "Juno...",
+        "15": "You really are something...",
+        "16": "",
+        "17": "",
+        "18": "Let's watch Juno give it her all,",
+        "19": "",
+        "20": "and the moment she fulfills her mission...!",
+        "21": "Hm? Hey! Are you okay!?",
+        "22": "Nova... is still resisting...!",
+        "23": "Nova is recovering...!?",
+        "24": "So an awakened Nova\nreally can't be stopped...!!",
+        "25": "Don't give in!!",
+        "26": "I won't give up...\nnot until the end...!!",
+        "27": "Juno!! Picture yourself succeeding!!",
+        "28": "...Please, help me...!",
+        "29": "",
+        "30": "",
+        "31": "",
+        "32": "",
+        "33": "I will be a hero\nfor just one person.",
+        "34": "That's what I promised...!",
+        "35": "Nova.",
+        "36": "The humans who created you",
+        "37": "and made a promise with you to guard\nthis planet have perished.",
+        "38": "Your role is over.\nThe time has come to sleep.",
+        "39": "\"We were born to guard the planet,\nfought invaders, and guard it still.\"",
+        "40": "\"The planet is still here.\nOur role is not over.\"",
+        "41": "I declare the promise ended.",
+        "42": "",
+        "43": "I too will join you\nin eternal sleep.",
+        "44": "\"Princess, we ask you.\"",
+        "45": "\"Did we fulfill our role...?\"",
+        "46": "...Yes.",
+        "47": "\"I see...\"",
+        "48": "\"I see...\"",
+        "49": "Raven...",
+        "50": "The promise I once made with you",
+        "51": "has brought about this ending.",
+        "52": "You are my hero."
+      },
+      "spans": [
+        [
+          6,
+          94,
+          0,
+          959
+        ],
+        [
+          80,
+          130,
+          126,
+          959
+        ],
+        [
+          114,
+          186,
+          0,
+          959
+        ],
+        [
+          216,
+          254,
+          167,
+          745
+        ],
+        [
+          239,
+          645,
+          44,
+          959
+        ],
+        [
+          630,
+          702,
+          65,
+          927
+        ],
+        [
+          687,
+          833,
+          233,
+          888
+        ],
+        [
+          818,
+          895,
+          79,
+          947
+        ],
+        [
+          915,
+          1010,
+          326,
+          625
+        ],
+        [
+          1025,
+          1168,
+          230,
+          731
+        ],
+        [
+          1185,
+          1341,
+          200,
+          805
+        ],
+        [
+          1326,
+          1464,
+          200,
+          800
+        ],
+        [
+          1449,
+          1553,
+          206,
+          804
+        ],
+        [
+          1545,
+          1599,
+          3,
+          519
+        ],
+        [
+          1592,
+          1757,
+          0,
+          813
+        ],
+        [
+          1742,
+          1822,
+          0,
+          585
+        ],
+        [
+          1813,
+          1839,
+          0,
+          813
+        ],
+        [
+          1825,
+          1879,
+          0,
+          914
+        ],
+        [
+          1868,
+          1998,
+          0,
+          669
+        ],
+        [
+          1983,
+          2034,
+          0,
+          871
+        ],
+        [
+          2019,
+          2147,
+          300,
+          649
+        ],
+        [
+          2247,
+          2347,
+          77,
+          910
+        ],
+        [
+          2415,
+          2498,
+          1,
+          959
+        ],
+        [
+          2512,
+          2572,
+          7,
+          956
+        ],
+        [
+          2655,
+          2774,
+          7,
+          958
+        ],
+        [
+          2777,
+          2934,
+          36,
+          956
+        ],
+        [
+          2924,
+          3078,
+          44,
+          903
+        ],
+        [
+          3065,
+          3155,
+          274,
+          936
+        ],
+        [
+          3422,
+          3532,
+          338,
+          613
+        ],
+        [
+          3707,
+          3779,
+          137,
+          632
+        ],
+        [
+          3767,
+          3798,
+          183,
+          645
+        ],
+        [
+          3781,
+          3807,
+          152,
+          644
+        ],
+        [
+          3797,
+          3825,
+          189,
+          664
+        ],
+        [
+          3836,
+          3944,
+          276,
+          679
+        ],
+        [
+          3949,
+          4015,
+          373,
+          577
+        ],
+        [
+          4335,
+          4380,
+          448,
+          569
+        ],
+        [
+          4400,
+          4456,
+          398,
+          557
+        ],
+        [
+          4461,
+          4621,
+          196,
+          765
+        ],
+        [
+          4641,
+          4793,
+          113,
+          768
+        ],
+        [
+          4804,
+          5100,
+          97,
+          862
+        ],
+        [
+          5085,
+          5340,
+          121,
+          839
+        ],
+        [
+          5329,
+          5828,
+          194,
+          752
+        ],
+        [
+          5813,
+          5876,
+          68,
+          926
+        ],
+        [
+          5861,
+          6035,
+          142,
+          935
+        ],
+        [
+          6047,
+          6107,
+          408,
+          550
+        ],
+        [
+          6126,
+          6261,
+          265,
+          694
+        ],
+        [
+          6370,
+          6424,
+          354,
+          618
+        ],
+        [
+          6416,
+          6445,
+          367,
+          606
+        ],
+        [
+          6434,
+          6488,
+          382,
+          550
+        ],
+        [
+          7094,
+          7145,
+          140,
+          889
+        ],
+        [
+          7157,
+          7251,
+          314,
+          783
+        ],
+        [
+          7249,
+          7338,
+          304,
+          657
+        ],
+        [
+          7641,
+          7733,
+          338,
+          622
+        ]
+      ]
+    },
+    "MP09_040_070": {
+      "sha256": "42a378d6af4a0e7cf792ad8c4c8226997ea12538045c5fcd28f2ce4656455bad",
+      "top": 470,
+      "bottom": 497,
+      "threshold": 350,
+      "frames": 2638,
+      "expected_lines": 14,
+      "presence_bits": "00000000000007fffffffffffc00000ffffffffffffffffffffffff80003ffffffffffffffffffffffffffffffe000001fffffffffffff8007ffffffffffffffffe00003ffffffff8000ffffffffffffff80000000001ffffffffffffffffffffc000000000001ffffffffc00000000003fffffffffffffffffffffff8000003ffffffffffffffffffffffe00003fffffffffffffffff8000000000007ffffffffffffffffe0000003fffffffffffffffffffffffffffffffe00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "cues": {
+        "0": "Delta Valiant, respond.",
+        "1": "This is the Neviim, a rescue ship\nof the \"Oracle\" fleet.",
+        "2": "This is the Delta Valiant, of the ARKS\nSpecial Planetary Exploration Team Alter.",
+        "3": "Report your ship's status.",
+        "4": "What on earth happened on this planet?",
+        "5": "Well...",
+        "6": "Ah... Captain...",
+        "7": "Huh? You want me to report that?",
+        "8": "All right, here goes.",
+        "9": "Our unit has completed its mission\non the planet Mahkia.",
+        "10": "The planet we explored was beautiful.",
+        "11": "Huh? What are you talking about?",
+        "12": "I repeat: mission complete.",
+        "13": "The planet we explored...\nwas truly beautiful."
+      },
+      "spans": [
+        [
+          44,
+          108,
+          313,
+          645
+        ],
+        [
+          117,
+          227,
+          196,
+          767
+        ],
+        [
+          232,
+          374,
+          122,
+          838
+        ],
+        [
+          380,
+          450,
+          336,
+          782
+        ],
+        [
+          449,
+          524,
+          304,
+          657
+        ],
+        [
+          536,
+          583,
+          422,
+          537
+        ],
+        [
+          591,
+          652,
+          398,
+          561
+        ],
+        [
+          689,
+          782,
+          333,
+          623
+        ],
+        [
+          820,
+          870,
+          389,
+          573
+        ],
+        [
+          899,
+          1004,
+          254,
+          704
+        ],
+        [
+          1019,
+          1122,
+          312,
+          645
+        ],
+        [
+          1128,
+          1206,
+          332,
+          623
+        ],
+        [
+          1247,
+          1335,
+          324,
+          632
+        ],
+        [
+          1342,
+          1485,
+          264,
+          693
+        ]
+      ]
+    }
+  },
+  "opening": {
+    "sha256": "619c3009b3e10c478e86eb221ccf1c9938052fd6ef9dbd97759b12afd7fb787d",
+    "top": 488,
+    "bottom": 504,
+    "frames": 4196,
+    "cues": [
+      {
+        "start": 12.75,
+        "end": 19.9,
+        "en": "Attention, Delta and all units.\nOur ship will soon arrive at Planet Wakua."
+      },
+      {
+        "start": 19.9,
+        "end": 22.0,
+        "en": "Begin deployment of the first exploration team."
+      },
+      {
+        "start": 22.0,
+        "end": 24.5,
+        "en": "Initiate the descent sequence."
+      }
+    ]
+  },
+  "notice": {
+    "sha256": "3ffb97be869b7c7f303520987bb1654f8a22bfcffe2fe6aa730a7ca7e6f38e6d",
+    "frames": 149,
+    "rows": [
+      {
+        "size": 32,
+        "center": 223,
+        "text": "Notice"
+      },
+      {
+        "size": 20,
+        "center": 278,
+        "text": "Sharing this game online without permission or knowingly downloading an illegal copy is prohibited by law."
+      },
+      {
+        "size": 20,
+        "center": 319,
+        "text": "Thank you for your understanding and cooperation."
+      }
+    ]
+  }
+}

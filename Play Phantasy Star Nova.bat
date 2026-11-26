@@ -5,8 +5,8 @@
 :: F10 = in-game menu, Alt+F4 = quit. Saves: dump\decrypted\PCSG00351\recomp\fs\savedata0. Log: ...\recomp\session.log
 cd /d "%~dp0"
 :: Python: .venv first; tools\python itself if the .venv is missing or was made at another path (a venv records its base by
-:: absolute path, so moving the folder breaks it). python.exe in a minimized console, not pythonw: the pipeline writes the
-:: game's log to its console.
+:: absolute path, so moving the folder breaks it). The game starts through pythonw.exe, which opens no console window;
+:: its log goes to session.log.
 set "PY=%~dp0.venv\Scripts\python.exe"
 if not exist "%PY%" set "PY="
 if defined PY "%PY%" -s -c "" 2>nul || set "PY="
@@ -16,4 +16,6 @@ if not exist "%PY%" (
   pause
   exit /b 1
 )
-start "Phantasy Star Nova" /min "%PY%" -s "pipeline\vitarecomp.py" run PCSG00351
+set "PYW=%PY:python.exe=pythonw.exe%"
+if not exist "%PYW%" set "PYW=%PY%"
+start "" "%PYW%" -s "pipeline\vitarecomp.py" run PCSG00351

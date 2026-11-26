@@ -1,4 +1,4 @@
-"""Rebuild the current English text and UI overlay from the player's CPKs."""
+"""Build the English text and UI archive from your own copy of the game's CPK archives."""
 
 import argparse
 import hashlib
@@ -98,10 +98,14 @@ def build_name_tables(patch):
     return replacements
 
 
-def build_textures(archives, font):
+def build_textures(archives, font, allow_missing=False):
     specs = recipe('textures')
     replacements = {}
     for name, spec in specs.items():
+        if allow_missing and not archives[spec['archive']].has(name):
+            print(f'{name} is missing from this copy (a fan translation dropped it): its English lettering is skipped',
+                  flush=True)
+            continue
         raw = archives[spec['archive']].read(name)
         if hashlib.sha256(raw).hexdigest() != spec['sha256']:
             raise ValueError(f'{name} differs from the original {spec["archive"]} archive used by this English patch')
@@ -110,7 +114,7 @@ def build_textures(archives, font):
     return replacements
 
 
-def build(base, patch, output, font):
+def build(base, patch, output, font, allow_missing=False):
     if not font.is_file():
         raise ValueError(f'English font file is missing: {font}')
     fallback_font = Path(os.environ.get('WINDIR', r'C:\Windows')) / 'Fonts' / 'segoeuib.ttf'
@@ -128,7 +132,7 @@ def build(base, patch, output, font):
             archives[region] = Archive(archive)
         replacements = build_messages(archives, font, fallback_font)
         replacements.update(build_name_tables(archives['patch']))
-        replacements.update(build_textures(archives, font))
+        replacements.update(build_textures(archives, font, allow_missing))
         replacements['ui_field.crbpj'] = center_dialogue_names(archives['patch'].read('ui_field.crbpj'))
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -144,9 +148,11 @@ def main():
     parser.add_argument('update', type=Path, help='original NOVA_FileList_Vita_patch.cpk from the 1.05 update')
     parser.add_argument('output', type=Path, help='destination for the English patch CPK')
     parser.add_argument('--font', type=Path, required=True, help='Glenth Regular font file')
+    parser.add_argument('--allow-missing-textures', action='store_true',
+                        help='an update archive restored from a fan translation: skip UI textures it no longer has')
     args = parser.parse_args()
     try:
-        build(*(path.resolve() for path in (args.base, args.update, args.output, args.font)))
+        build(*(path.resolve() for path in (args.base, args.update, args.output, args.font)), args.allow_missing_textures)
     except (OSError, ValueError, KeyError, cpk_build.C.CpkError) as exc:
         parser.exit(1, f'English localization setup failed: {exc}\n')
 

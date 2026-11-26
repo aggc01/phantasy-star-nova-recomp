@@ -454,6 +454,10 @@ void metrics_window_frame(uint64_t blit_us) {
 }
 
 int metrics_title(char *buf, int bufsz) {
+	/* the window keeps the game's name as its title; RECOMP_TITLE_METRICS=1 puts the stats line there instead (F1 shows
+	 * the same numbers in the window) */
+	static int on = -1; if (on < 0) { const char *e = getenv("RECOMP_TITLE_METRICS"); on = e && *e && *e != '0'; }
+	if (!on) return 0;
 	uint64_t now = now_us();
 	pthread_mutex_lock(&mx);
 	int due = !last_title_emit_us || now - last_title_emit_us >= 500000ull;

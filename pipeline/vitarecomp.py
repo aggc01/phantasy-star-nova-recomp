@@ -26,6 +26,9 @@
                                             update layered over it (app0_patched, hard links) when
                                             the pack plays that version; records which version it is
   vitarecomp versions  <title>              the versions the game's pack plays, and which this copy is
+  vitarecomp localize  <title> [--font F] [--ffmpeg F] [--force]   the pack's localization (LOCALIZE in its pack.toml),
+                                            built from your copy into dump/decrypted/<title>/lang (add runs it after
+                                            the build): Phantasy Star Nova's English, from packs/PCSG00351/english
   vitarecomp repatch   <title> <folder>     a rePatch folder (ux0:rePatch/<title>: plain files, e.g. a fan
                                             translation's archives) copied to dump/decrypted/<title>/repatch0 and
                                             layered over the game by import (app0_repatched); RECOMP_NO_REPATCH=1
@@ -300,6 +303,11 @@ def cmd_add(T, rest):
     run(SELF + ["import", tid])
     if not os.path.isfile(os.path.join(PACKS, tid, "pack.toml")): die(f"{tid}: imported; there's no game pack for it yet (packs/{tid}/pack.toml)", 0)
     for c in ("analyze", "recompile", "build"): run(SELF + [c, tid])
+    # the pack's localization (LOCALIZE): the game is built and plays without it, so a missing font or a modified copy is
+    # said and the add still succeeds
+    if packconf.load(os.path.join(PACKS, tid, "pack.toml")).get("LOCALIZE") and subprocess.run(SELF + ["localize", tid]).returncode:
+        say(f"{tid}: built without its localization (the reason is above): it plays in its own language. "
+            f"Once that's fixed: vitarecomp localize {tid}")
 
 
 def _last_line(argv, env):   # `cmd | tail -1`
@@ -443,6 +451,39 @@ def repatch_keep(g, game, rp, out):
         say(f"{g.T}: {arc}: the rePatch's archive plus {', '.join(entries)} from the game's own -> {merged}")
 
 
+def link_langs(g):
+    W, OUT = g.W, g.OUT
+    # language overlays (2026-11-19): $W/lang/<code>/ (files laid out as app0, plus a language.txt with the name the
+    # menu shows) -> fs/lang/<code>, each a link; the runtime swaps in a file of the language the "language" setting
+    # names (runtime/core/io.c host_lang). Links whose language folder is gone are removed.
+    lsrc, ldst = os.path.join(W, "lang"), os.path.join(OUT, "fs", "lang")
+    if os.path.isdir(lsrc) or os.path.isdir(ldst):
+        os.makedirs(ldst, exist_ok=True)
+        have = sorted(d for d in os.listdir(lsrc) if os.path.isdir(os.path.join(lsrc, d))) if os.path.isdir(lsrc) else []
+        for d in os.listdir(ldst):
+            p = os.path.join(ldst, d)
+            if d not in have and (os.path.islink(p) or _is_junction(p)): rmtree(p)
+        for d in have:
+            p = os.path.join(ldst, d)
+            if os.path.islink(p) or _is_junction(p) or not os.path.lexists(p): link_dir(os.path.realpath(os.path.join(lsrc, d)), p)
+        # default.txt (first word: a language folder's name; none = the game's own): the language a player gets until they
+        # choose one in the menu -- copied, so editing $W/lang/default.txt and importing again changes it
+        dsrc, ddst = os.path.join(lsrc, "default.txt"), os.path.join(ldst, "default.txt")
+        if os.path.isfile(dsrc): shutil.copyfile(dsrc, ddst)
+        elif os.path.isfile(ddst): os.remove(ddst)
+        if have: say(f"{g.T}: language overlays {', '.join(have)} -> {ldst}" + (f", default {head1(dsrc).split()[0] if head1(dsrc).split() else 'the game own'}" if os.path.isfile(dsrc) else ""))
+
+
+def cmd_localize(g, rest):
+    """LOCALIZE = "<folder>/<script>.py" (pack.toml): the pack's localization, built from this copy's own decrypted files
+    into $W/lang/<code>/ (packs/PCSG00351/english/localize.py: Phantasy Star Nova's English text, UI art and movie
+    subtitles), then linked into fs/lang as import does. The script's exit status: 0 built or up to date"""
+    if not g.LOCALIZE: die(f"{g.T}: its pack has no localization (LOCALIZE in packs/{g.PACK}/pack.toml)")
+    rc = subprocess.run([PY, "-B", os.path.join(PACKS, g.PACK, g.LOCALIZE), g.W] + rest).returncode
+    if os.path.isdir(g.OUT): link_langs(g)
+    return rc
+
+
 def cmd_import(g, src):
     W, OUT = g.W, g.OUT
     if not src:   # the title's own copy (add's): the game, with its update layered over it when the pack plays that version
@@ -495,25 +536,7 @@ def cmd_import(g, src):
         run([PY, os.path.join(DECRYPT, "fself2elf.py"), src, os.path.join(W, "elf")])
         if os.path.isdir(os.path.join(src, "sce_module")): run([PY, os.path.join(DECRYPT, "fself2elf.py"), os.path.join(src, "sce_module"), os.path.join(W, "elf")])
         if os.path.isdir(os.path.join(src, "data")): shutil.copytree(os.path.join(src, "data"), os.path.join(app0, "data"), symlinks=True, dirs_exist_ok=True)
-    # language overlays (2026-11-19): $W/lang/<code>/ (files laid out as app0, plus a language.txt with the name the
-    # menu shows) -> fs/lang/<code>, each a link; the runtime swaps in a file of the language the "language" setting
-    # names (runtime/core/io.c host_lang). Links whose language folder is gone are removed.
-    lsrc, ldst = os.path.join(W, "lang"), os.path.join(OUT, "fs", "lang")
-    if os.path.isdir(lsrc) or os.path.isdir(ldst):
-        os.makedirs(ldst, exist_ok=True)
-        have = sorted(d for d in os.listdir(lsrc) if os.path.isdir(os.path.join(lsrc, d))) if os.path.isdir(lsrc) else []
-        for d in os.listdir(ldst):
-            p = os.path.join(ldst, d)
-            if d not in have and (os.path.islink(p) or _is_junction(p)): rmtree(p)
-        for d in have:
-            p = os.path.join(ldst, d)
-            if os.path.islink(p) or _is_junction(p) or not os.path.lexists(p): link_dir(os.path.realpath(os.path.join(lsrc, d)), p)
-        # default.txt (first word: a language folder's name; none = the game's own): the language a player gets until they
-        # choose one in the menu -- copied, so editing $W/lang/default.txt and importing again changes it
-        dsrc, ddst = os.path.join(lsrc, "default.txt"), os.path.join(ldst, "default.txt")
-        if os.path.isfile(dsrc): shutil.copyfile(dsrc, ddst)
-        elif os.path.isfile(ddst): os.remove(ddst)
-        if have: say(f"{g.T}: language overlays {', '.join(have)} -> {ldst}" + (f", default {head1(dsrc).split()[0] if head1(dsrc).split() else 'the game own'}" if os.path.isfile(dsrc) else ""))
+    link_langs(g)
     # VERSIONS (packs/<title>/pack.toml): the builds the pack's hooks and addresses were made for -- another version or region
     # would mis-hook, so say so here rather than crash later; which one this is goes to $W/version, for the pack's per-version settings
     if g.VERSIONS:
@@ -669,7 +692,11 @@ def tee_run(argv, env, cwd, log_path):
     """the game, its stderr to the terminal and to log_path (2> >(tee log >&2)): its exit status"""
     sys.stdout.flush()
     with open(log_path, "wb") as log:
-        p = start_game(argv, env=env, cwd=cwd, stderr=subprocess.PIPE)
+        # no console of our own (pythonw.exe, as Play Phantasy Star Nova.bat starts it): the game, a console program, would
+        # open a black console window of its own beside the game window -- CREATE_NO_WINDOW keeps it hidden (its log still
+        # comes through the pipe)
+        quiet = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" and sys.__stderr__ is None else {}
+        p = start_game(argv, env=env, cwd=cwd, stderr=subprocess.PIPE, **quiet)
         def pump():
             # the terminal gets whole characters only: raw chunks cut a UTF-8 character in two at a read boundary, and
             # Python's Windows console writer then loops forever on the half character (100 % of a core, nothing more
@@ -1044,7 +1071,7 @@ def main(argv):
     if cmd == "add": cmd_add(T, argv[2:]); return 0
     if cmd == "dist": cmd_dist(T); return 0
     if cmd == "report": cmd_report(T); return 0
-    if cmd not in ("import", "analyze", "recompile", "build", "ready", "run", "test", "capture", "replay", "accept", "check", "coverage", "verify", "recipes", "versions", "repatch"):
+    if cmd not in ("import", "analyze", "recompile", "build", "ready", "run", "test", "capture", "replay", "accept", "check", "coverage", "verify", "recipes", "versions", "repatch", "localize"):
         usage(); return 1
     g = Game(T, cmd)
     arg3 = argv[2] if len(argv) > 2 else ""
@@ -1052,6 +1079,7 @@ def main(argv):
     elif cmd == "analyze": cmd_analyze(g)
     elif cmd == "recompile": cmd_recompile(g)
     elif cmd == "build": cmd_build(g, arg3)
+    elif cmd == "localize": return cmd_localize(g, argv[2:])
     elif cmd == "ready": cmd_ready(g)
     elif cmd == "run": cmd_run(g, arg3)
     elif cmd == "test": cmd_test(g)

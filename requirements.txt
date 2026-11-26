@@ -1,3 +1,7 @@
 # what the shipped scripts import (the install: vitarecomp dist); developer tools also use unicorn, pyelftools, pyflakes
 capstone==5.0.9
 pycryptodome==3.24.0
+# Phantasy Star Nova's English localization (packs/PCSG00351/english): text and UI art, movie subtitles
+pillow==12.2.0
+numpy==2.4.6
+opencv-python-headless==4.13.0.92
