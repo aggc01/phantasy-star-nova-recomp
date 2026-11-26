@@ -28,26 +28,50 @@ Setup builds an **English localization** from your copy: menus, dialogue, UI art
 Japanese subtitles burned into the movies removed (see [English](#english)). Known issues are tracked in
 [docs/psnova/README.md](docs/psnova/README.md).
 
-## What you need
-
-| | |
-| --- | --- |
-| PC | 64-bit Windows 10 or 11, a GPU with a current Vulkan driver, about 12 GB of free disk space (plus room to unpack the game if it is in a ZIP) |
-| Software | [Git for Windows](https://git-scm.com/download/win) (for Git Bash) and [Python](https://www.python.org/downloads/) 3.12 or newer |
-| The game | *Phantasy Star Nova*, Japan, title ID `PCSG00351`: the **1.00** base game and the official **1.05** update, as PKG files or as folders copied from a Vita (`ux0:app/PCSG00351`, `ux0:patch/PCSG00351`) |
-| The game's licence | `work.bin` or a `.rif` file for your copy. In a game folder copied from a Vita it is `sce_sys\package\work.bin` |
-| Vita system software | `PSVUPDAT.PUP` 3.74, from [PlayStation's download page](https://www.playstation.com/en-us/support/hardware/psvita/system-software/) |
-| For English | The font [Glenth Regular](https://elements.envato.com/glenth-classic-display-serif-font-9ZK6SWW) by OWPictures (`glenthregular.ttf`). It is not free to share, so it is not included: you need your own copy |
-
-Other regions and versions are not supported. Use an unmodified copy. A copy that already carries a fan translation
-works too: setup removes the fan translation and applies this one, with a few limits (see [English](#english)).
-
 ## Setup
 
-Run these from PowerShell in the folder where you want the project, unless a step says Git Bash. Setup takes about
-40 minutes in all, most of it the first build and the English; after that the game starts in seconds.
+You set up once, in six steps. It takes about 40 minutes, most of it waiting while your PC builds the game. After
+that you start the game with a double-click.
 
-**1. Get the code, its Python packages and a folder for your game library.**
+| Step | What it does | Time |
+| --- | --- | --- |
+| [1. Download the project](#1-download-the-project) | Gets the code and its Python packages | 2 min |
+| [2. Install the build tools](#2-install-the-build-tools) | Downloads the compiler and libraries | 5 min |
+| [3. Add the Vita system software](#3-add-the-vita-system-software) | Takes the modules the game needs from Sony's firmware file | 1 min |
+| [4. Add the English font](#4-add-the-english-font) | Lets setup build the English version | 1 min |
+| [5. Add your game](#5-add-your-game) | Builds the Windows game and its English | 30 min |
+| [6. Play](#6-play) | | |
+
+### Before you start
+
+Get these ready. Everything else is downloaded for you.
+
+- [ ] **A Windows PC:** Windows 10 or 11 (64-bit), a graphics card with an up-to-date driver, and about 12 GB of free
+  disk space.
+- [ ] **[Git for Windows](https://git-scm.com/download/win)** and **[Python](https://www.python.org/downloads/)**
+  3.12 or newer, installed with their default options.
+- [ ] **Your copy of the game:** *Phantasy Star Nova* for the Japanese PS Vita (`PCSG00351`), both the **1.00** game
+  and the official **1.05** update. PKG files work, and so do the `app` and `patch` folders copied from a Vita.
+- [ ] **Your game's licence file:** `work.bin` or a `.rif` file. In a game folder copied from a Vita it is in
+  `sce_sys\package\`.
+- [ ] **The Vita system software:** `PSVUPDAT.PUP` version 3.74, from
+  [PlayStation's download page](https://www.playstation.com/en-us/support/hardware/psvita/system-software/).
+- [ ] **For English:** your own copy of the font
+  [Glenth Regular](https://elements.envato.com/glenth-classic-display-serif-font-9ZK6SWW) (`glenthregular.ttf`). It
+  is not free to share, so it can't be included. Without it you get the game in Japanese.
+
+Other regions and versions don't work. A copy that already has a fan translation works: setup removes the fan
+translation and puts this English in its place, with a few limits (see [English](#english)).
+
+> [!TIP]
+> **Running the commands.** To open PowerShell in a folder, open the folder in File Explorer, click the address bar,
+> type `powershell` and press Enter. Copy a whole code block, paste it into the window with Ctrl+V, and wait
+> until the prompt comes back before the next one. Where a command says `C:\path\to\…`, put the path of your own file
+> between the quotes. Dragging the file onto the PowerShell window types its path for you.
+
+### 1. Download the project
+
+Open PowerShell in the folder where you want the project, for example your Documents folder, and run:
 
 ```powershell
 git clone https://github.com/aggc01/phantasy-star-nova-recomp.git
@@ -57,57 +81,97 @@ py -3 -m venv .venv
 New-Item -ItemType Directory dump
 ```
 
-The `dump` folder is where the decrypted game, the build and your saves go. Create it before step 3: without it,
-everything goes to a shared folder in `%LOCALAPPDATA%\ProjectNativ` on your C: drive instead.
+**It worked if** the last line shows a new folder named `dump`. That folder holds your game library, the build and
+your saves. Keep this PowerShell window open for steps 3 to 5.
 
-**2. Install the compiler toolchain** (Clang for Windows, SDL3, zlib, FFmpeg's decoders, and an FFmpeg program
-that re-encodes the movies for English, all at pinned versions). Open **Git Bash** in the project folder:
+### 2. Install the build tools
+
+This step uses **Git Bash**, which came with Git. In File Explorer, open the new `phantasy-star-nova-recomp` folder,
+right-click an empty spot and choose **Open Git Bash here** (on Windows 11 it is under **Show more options**). Run:
 
 ```bash
 ATIV_WIN_TOOLCHAIN="$PWD/toolchain" bash runtime/platform/win/setup-toolchain.sh
 ```
 
-This downloads about 280 MB and builds into `toolchain\` (about 1.1 GB), where the build looks for it. It takes about
-5 minutes.
+It downloads about 280 MB into a `toolchain` folder inside the project. **It worked if** the last line starts with
+`toolchain:` and doesn't say `MISSING`. You can close Git Bash now.
 
-**3. Prepare the Vita system software.** The game needs some of Sony's system modules, which are taken from the
-firmware file you downloaded:
+### 3. Add the Vita system software
+
+Back in PowerShell, with the path of your `PSVUPDAT.PUP`:
 
 ```powershell
 .\.venv\Scripts\python.exe pipeline\vitarecomp.py firmware "C:\path\to\PSVUPDAT.PUP"
 ```
 
-**4. Add the English font.** Copy your `glenthregular.ttf` into `packs\PCSG00351\english\fonts\`. Git ignores
-fonts there, so it is never committed. Without it the game still builds, in Japanese, and the next step tells you what
-is missing.
+**It worked if** the last line starts with `firmware 3.74`.
 
-**5. Add the game, then its update.** The first command decrypts and keeps the base game. The second adds the 1.05
-update and then builds everything: import, analysis, recompilation and compilation (about 15 minutes), then the
-English localization (about 15 minutes).
+### 4. Add the English font
+
+Copy your `glenthregular.ttf` into the project's `packs\PCSG00351\english\fonts\` folder. It stays on your PC: git
+never uploads fonts from there.
+
+Skip this step if you want the game in Japanese.
+
+### 5. Add your game
+
+Run the first command with your base game and its licence file, then the second with the 1.05 update:
 
 ```powershell
 .\.venv\Scripts\python.exe pipeline\vitarecomp.py add "C:\path\to\base-game.pkg" --license "C:\path\to\work.bin" --no-build
+```
+
+```powershell
 .\.venv\Scripts\python.exe pipeline\vitarecomp.py add "C:\path\to\update-1.05.pkg"
 ```
 
-Instead of PKG files you can give the game folders copied from a Vita: `...\app\PCSG00351` for the base game and
-`...\patch\PCSG00351` for the update. If your game is in a ZIP, unpack it first. Your files are only read. The build
-prints a line starting `built` and the path of `game_host.exe`, and the English ends with
-`English localization ready`.
+The first takes a minute. The second builds the game (about 15 minutes), then the English (about 15 minutes), and
+prints a lot as it goes. **It worked if** it ends with a line starting `English localization ready`. Without the
+font, it ends with a message about the font instead, and the game is built in Japanese.
 
-PowerShell shows some of the tools' notes in red, for example one about `sce_sys\about\right.suprx` being skipped.
-That note is expected: the file is not part of the game's code. A step has worked if it ends without an error message.
+Your game files are only read, never changed.
 
-If you add the font later, or the English stopped for another reason, build only the English with:
+<details>
+<summary>Your game is in folders or a ZIP, not PKG files</summary>
+
+Unpack a ZIP first. Then give the folders instead of the PKG files: the folder ending `app\PCSG00351` for the base
+game, and the one ending `patch\PCSG00351` for the update.
+
+</details>
+
+<details>
+<summary>Red text appears while it runs</summary>
+
+PowerShell shows some of the tools' notes in red, for example one saying `sce_sys\about\right.suprx` is skipped. That
+is expected. A step has worked if it ends without an error message.
+
+</details>
+
+<details>
+<summary>You added the font later, or the English stopped</summary>
+
+Build only the English (about 15 minutes):
 
 ```powershell
 .\.venv\Scripts\python.exe pipeline\vitarecomp.py localize PCSG00351
 ```
 
-**6. Play.** Double-click **`Play Phantasy Star Nova.bat`**.
+</details>
 
-To rebuild after changing the code, run `bash dev/psn_build_all.sh` from Git Bash. It runs the import, analyze,
-recompile and build stages again and writes a log for each to `dev/psn-logs/`.
+### 6. Play
+
+Double-click **`Play Phantasy Star Nova.bat`** in the project folder. See [Playing](#playing) for the controls and
+the in-game menu.
+
+If something went wrong, see [Troubleshooting](#troubleshooting).
+
+<details>
+<summary>Rebuilding after you change the code</summary>
+
+Run `bash dev/psn_build_all.sh` from Git Bash. It runs the import, analyze, recompile and build stages again and
+writes a log for each to `dev/psn-logs/`.
+
+</details>
 
 ## Playing
 
