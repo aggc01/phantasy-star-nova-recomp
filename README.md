@@ -30,13 +30,13 @@ Japanese subtitles burned into the movies removed (see [English](#english)). Kno
 
 ## Setup
 
-You set up once, in six steps. It takes about 40 minutes, most of it waiting while your PC builds the game. After
+You set up once, in six steps. It takes 40 minutes to an hour, most of it waiting while your PC builds the game. After
 that you start the game with a double-click.
 
 | Step | What it does | Time |
 | --- | --- | --- |
 | [1. Download the project](#1-download-the-project) | Gets the code and its Python packages | 2 min |
-| [2. Install the build tools](#2-install-the-build-tools) | Downloads the compiler and libraries | 5 min |
+| [2. Install the build tools](#2-install-the-build-tools) | Downloads the compiler and libraries | 5–30 min |
 | [3. Add the Vita system software](#3-add-the-vita-system-software) | Takes the modules the game needs from Sony's firmware file | 1 min |
 | [4. Add the English font](#4-add-the-english-font) | Lets setup build the English version | 1 min |
 | [5. Add your game](#5-add-your-game) | Builds the Windows game and its English | 30 min |
@@ -103,8 +103,12 @@ right-click an empty spot and choose **Open Git Bash here** (on Windows 11 it is
 ATIV_WIN_TOOLCHAIN="$PWD/toolchain" bash runtime/platform/win/setup-toolchain.sh
 ```
 
-It downloads about 280 MB into a `toolchain` folder inside the project. **It worked if** the last line starts with
-`toolchain:` and doesn't say `MISSING`. You can close Git Bash now.
+It downloads about 280 MB into a `toolchain` folder inside the project, then unpacks the compiler and builds part of
+FFmpeg. **That part shows nothing on screen for 5 to 30 minutes, depending on your PC.** It hasn't stopped: leave the
+window open and let it finish. Each stage prints a line starting `==` when it begins.
+
+**It worked if** the last line starts with `toolchain:` and doesn't say `MISSING`. You can close Git Bash now. If you
+closed it early, run the same command again: it skips what's already downloaded.
 
 ### 3. Add the Vita system software
 
