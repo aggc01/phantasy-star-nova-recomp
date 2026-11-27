@@ -187,6 +187,24 @@ writes a log for each to `dev/psn-logs/`.
 
 </details>
 
+## Updating
+
+Get the new version into the same project folder, keeping your `dump` folder:
+
+- **If you cloned with git:** run `git pull` in the project folder.
+- **If you downloaded a ZIP:** unpack the new ZIP over your project folder and let it replace the files. Don't unpack
+  it to a new folder: the `dump` folder in your current one holds your game, the build and your saves.
+
+Then, in PowerShell in the project folder, run:
+
+```powershell
+.\.venv\Scripts\python.exe pipeline\vitarecomp.py update PCSG00351
+```
+
+It rebuilds only what the new version changed. Your game isn't imported again, and the English is rebuilt only when
+the English files changed. Most updates take a few minutes; one that changes the recompiler takes longer, about as
+long as the first build. Don't use step 5's `add` commands to update: they redo everything from the start.
+
 ## Playing
 
 The game opens in a 960 × 544 window, the Vita's own resolution, with the frame rate shown in the top-left corner

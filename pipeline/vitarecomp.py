@@ -46,6 +46,8 @@
   vitarecomp ready     <title>              its build brought up to date with these tools before it plays (the
                                             launcher's Play): code regenerated when recompiler/ or its pack.toml
                                             changed, the program rebuilt when the tools did; nothing to do: a moment
+  vitarecomp update    <title>              after unpacking a newer release over this folder: ready, then the
+                                            localization when its sources changed -- nothing imported again
   vitarecomp test      <title>              headless scripted run (packs/<title>/pack.toml TEST_INPUT),
                                             saves the TEST_FRAMES frame as test.png, and the
                                             graphics coverage map as gfxcov.json
@@ -601,17 +603,33 @@ def cmd_recompile(g):
     with open(os.path.join(OUT, ".recompile_inputs"), "w", newline="\n") as f: f.write(recompile_inputs(g) + "\n")   # (ready's)
 
 
-def recompile_inputs(g):
+RUN_ONLY = re.compile(rb"^\s*(#|(RUN_ENV|TEST_[A-Z_]+)\s*=)")   # pack.toml lines the generated code never sees: comments, run and test settings
+
+
+def recompile_inputs(g, whole_pack=False):
     """what a title's generated code was made from: recompiler/ and its pack.toml (HOOKS, IHOOKS, MODULES, FUNCTION_SEEDS ...),
-    as git hashes a blob of their contents in path order -- dev/build-all.sh's formula before this, so its stamps
-    (recomp/.recompile_inputs) stay valid -- and computed without git, so an install has it too"""
+    as git hashes a blob of their contents in path order -- computed without git, so an install has it too. The pack's
+    comment lines and its run and test settings (RUN_ENV, TEST_*) are left out: a new run setting (Nova's bloom targets,
+    2026-11-27) made every player's update analyse and recompile the whole game again. whole_pack: the formula before
+    that, every byte of pack.toml, whose stamps still count (ready)."""
     files = [f"packs/{g.PACK}/pack.toml"] if os.path.isfile(g.CONF) else []
     for d, sub, names in os.walk(RECOMPILER):
         sub[:] = [x for x in sub if x != "__pycache__" and not x.startswith(".")]
         # (hidden files aren't the recompiler's: a tar from a Mac leaves ._ metadata beside each file, 2026-10-26)
         files += [os.path.relpath(os.path.join(d, n), ROOT).replace(os.sep, "/") for n in names if not n.endswith(".pyc") and not n.startswith(".")]
-    data = b"".join(open(os.path.join(ROOT, f), "rb").read() for f in sorted(files, key=lambda f: f.encode()))
+    def content(f):
+        b = open(os.path.join(ROOT, f), "rb").read()
+        if whole_pack or not f.endswith("pack.toml"): return b
+        return b"".join(line for line in b.splitlines(keepends=True) if not RUN_ONLY.match(line))
+    data = b"".join(content(f) for f in sorted(files, key=lambda f: f.encode()))
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def code_current(g):
+    """the game's generated code was made from these recompiler sources and pack (its .recompile_inputs stamp, either formula)"""
+    f = os.path.join(g.OUT, ".recompile_inputs")
+    s = open(f, encoding="utf-8").read().strip() if os.path.isfile(f) else ""
+    return bool(s) and s in (recompile_inputs(g), recompile_inputs(g, whole_pack=True))
 
 
 def tools_version():
@@ -633,14 +651,25 @@ def cmd_ready(g):
         return open(f, encoding="utf-8").read().strip() if os.path.isfile(f) else ""
     if not os.path.isfile(os.path.join(g.W, "elf", g.ELF)): die(f"{g.T}: not added yet (vitarecomp add, or + Add game in the launcher)")
     remade = False
-    if stamp(".recompile_inputs") != recompile_inputs(g):
+    if not code_current(g):
         say(f"{g.T}: the recompiler or the game's pack changed since its code was made: making it again")
         run(SELF + ["analyze", g.T]); run(SELF + ["recompile", g.T]); remade = True
     ver = tools_version()
     if remade or not ver or stamp(".built_version") != ver or not os.path.isfile(os.path.join(g.OUT, g.EXE)):
         say(f"{g.T}: building it with these tools ({ver or 'a checkout without git'})")
-        run(SELF + ["build", g.T])
+        # the code wasn't made again: its compiled parts are this recompiler's too (runtime/build.py's RECOMP_PARTS_CURRENT,
+        # for objects older than its content stamp)
+        run(SELF + ["build", g.T], env=env_with({} if remade else {"RECOMP_PARTS_CURRENT": "1"}))
     else: say(f"{g.T}: up to date")
+
+
+def cmd_update(g):
+    """after unpacking a newer release over this folder: rebuild only what the new files change -- the generated code when
+    the recompiler or the pack's code settings changed (ready), the program when the tools did, the localization when its
+    sources did (localize says "up to date" otherwise). The game's files are not imported or decrypted again."""
+    cmd_ready(g)
+    if g.LOCALIZE and cmd_localize(g, []):
+        say(f"{g.T}: the localization was not rebuilt (the reason is above); the game plays with the one it had")
 
 
 def cmd_build(g, mode):
@@ -1071,7 +1100,7 @@ def main(argv):
     if cmd == "add": cmd_add(T, argv[2:]); return 0
     if cmd == "dist": cmd_dist(T); return 0
     if cmd == "report": cmd_report(T); return 0
-    if cmd not in ("import", "analyze", "recompile", "build", "ready", "run", "test", "capture", "replay", "accept", "check", "coverage", "verify", "recipes", "versions", "repatch", "localize"):
+    if cmd not in ("import", "analyze", "recompile", "build", "ready", "update", "run", "test", "capture", "replay", "accept", "check", "coverage", "verify", "recipes", "versions", "repatch", "localize"):
         usage(); return 1
     g = Game(T, cmd)
     arg3 = argv[2] if len(argv) > 2 else ""
@@ -1081,6 +1110,7 @@ def main(argv):
     elif cmd == "build": cmd_build(g, arg3)
     elif cmd == "localize": return cmd_localize(g, argv[2:])
     elif cmd == "ready": cmd_ready(g)
+    elif cmd == "update": cmd_update(g)
     elif cmd == "run": cmd_run(g, arg3)
     elif cmd == "test": cmd_test(g)
     elif cmd == "capture": cmd_capture(g, arg3)

@@ -179,11 +179,30 @@ def main(argv):
     if not jobs:
         per = 3 if "Free Software Foundation" in " ".join(out_of([CC, "--version"])) else 2
         jobs = max(1, min(memory_gb() // per, os.cpu_count() or 1))
-    rt = os.path.join(RECOMPILER, "rt.h")
+    # The generated code's objects are reused while the object is newer than its source and its header (recomp.py rewrites
+    # only what changed) and everything else they're compiled from is the same: rt.h, the forced include, LibAtrac9's
+    # headers, the flags and the compiler. That much is compared by content (OBJ/.part_inputs), not by date: a release ZIP
+    # unpacked over the folder dates every file anew, and "rt.h is newer" recompiled the whole game (about 15 minutes) for
+    # an update that changed none of it. RECOMP_PARTS_CURRENT=1 (vitarecomp build, when the game's code was made by these
+    # same recompiler sources): objects built before the stamp existed are taken as current.
+    stamp_path = os.path.join(OBJ, ".part_inputs")
+    h = hashlib.sha256()
+    for f in [os.path.join(RECOMPILER, "rt.h")] + ([os.path.join(RT, "platform", "win32_compat.h")] if WIN else []) + sorted(glob.glob(os.path.join(ROOT, "third_party", "libatrac9", "*.h"))):
+        with open(f, "rb") as fh: h.update(fh.read())
+    h.update("\0".join([CC] + FLAGS + out_of([CC, "--version"])).encode())
+    stamp = h.hexdigest()
+    try:
+        with open(stamp_path) as fh: old_stamp = fh.read().strip()
+    except OSError:
+        old_stamp = stamp if ENV.get("RECOMP_PARTS_CURRENT") == "1" else ""
+    inputs_changed = old_stamp != stamp
+    headers = {BASE: BASE + ".h"}; headers.update({m: m + ".h" for m in mods})
     work = []
     for s in srcs:
         o = os.path.join(OBJ, os.path.splitext(os.path.basename(s))[0] + ".o")
-        if not os.path.isfile(o) or newer(s, o) or newer(rt, o): work.append(([CC, "-c"] + FLAGS + [s, "-o", o], s, o, CC, False))
+        hdr = next((headers[b] for b in headers if os.path.basename(s).startswith(os.path.basename(b) + "_part") or s == b + ".c"), None)
+        if inputs_changed or not os.path.isfile(o) or newer(s, o) or (hdr and os.path.isfile(hdr) and newer(hdr, o)):
+            work.append(([CC, "-c"] + FLAGS + [s, "-o", o], s, o, CC, False))
     # the in-game overlay (runtime/ui/overlay.cpp, this project's one C++ file) and Dear ImGui itself
     # (third_party/imgui/, MIT: see its own README for the pinned release): built once into their own
     # cached objects -- nothing here depends on which game is being linked -- and reused by that game's later builds
@@ -222,6 +241,9 @@ def main(argv):
         return None
     with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex: failed = [f for f in ex.map(compile_one, work) if f]
     if failed: die("build: " + ", ".join(os.path.basename(f) for f in failed) + " did not compile")
+    if old_stamp != stamp or not os.path.isfile(stamp_path):   # (what the objects now in OBJ were compiled from)
+        with open(stamp_path + ".tmp", "w") as fh: fh.write(stamp + "\n")
+        os.replace(stamp_path + ".tmp", stamp_path)
     # spirv-cross (SPIRV-Cross's C API): only needed where SDL_GPU doesn't consume SPIR-V directly,
     # i.e. on Metal (Mac); Vulkan (Linux/Windows) takes our SPIR-V as-is, no translation at runtime.
     SPIRV_CROSS = []
