@@ -103,7 +103,7 @@ void usse_program_free(UsseProgram *p);
  * each such sample reads for this draw, and the texture unit it samples (one the program's own samplers don't
  * use, from 15 down) -- the caller binds a texture made from the words there. Returns how many (0: none). */
 #define USSE_MAX_MEMTEX 16
-int usse_memory_textures(const UsseProgram *p, uint32_t def_uniform_buf, const uint32_t ubuf[14], uint32_t words[][4], int units[]);
+int usse_memory_textures(const UsseProgram *p, uint32_t def_uniform_buf, const uint32_t ubuf[14], uint32_t tex_state, uint32_t words[][4], int units[]);
 int usse_primary_reads_memory(const UsseProgram *p);   /* its primary program has an LDST: what it computes depends on memory its registers don't hold */
 int usse_buffer_words(const UsseProgram *p, int c);   /* the words of uniform buffer c it copies into SA (0: reached only through LDST pointers) */
 int usse_program_pa_words(const UsseProgram *p);    /* vertex: PA words per vertex record (a multiple of 4, at most 160) */
@@ -121,6 +121,9 @@ const UsseAttrSlot *usse_find_attr(const UsseVertexLayout *vl, int reg);
  * unit index (our own simplified stand-in for the real 4-word hardware texture descriptor: SMP
  * reads this back as the unit to sample, see usse.c). */
 void usse_setup_registers(const UsseProgram *p, UsseDraw *d, uint32_t def_uniform_buf, const uint32_t ubuf[14]);
+/* after usse_setup_registers: the SA pointers into the fragment program's texture state (uniform-buffer info reside 15;
+ * GfxDraw.ftexstate: its textures' words in sampler order, 16 bytes each), each with its entry's bias. 0: left 0. */
+void usse_set_texture_state(const UsseProgram *p, UsseDraw *d, uint32_t tex_state);
 /* a game's own adjustment of a draw's default uniforms (container 14, at SA base14.. base14+size14-1),
  * called by usse_setup_registers once they are loaded -- on both backends, and without touching the
  * guest's buffer (packs/PCSA00029/hooks.c: Uncharted's fade-out distance under the view-distance setting). NULL: none. */

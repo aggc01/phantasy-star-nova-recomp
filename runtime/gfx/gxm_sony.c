@@ -376,6 +376,7 @@ static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t in
 		uint32_t gxp = d.fprog;
 		d.funiforms = RD32(pf + 0xc);
 		for (int i = 0; i < 14; i++) d.fubuf[i] = state_ubuf(gxp, RD32(pf + 8), RD32(pf + 0x10), i);
+		d.ftexstate = RD32(pf + 4);   /* (the textures below, in sampler order: what a reside-15 pointer reads) */
 		/* textures in sampler order at [state+4], sampler k -> unit fprog[+0x38][k] */
 		uint32_t n = RD32(fp + 0x34), units = RD32(fp + 0x38);
 		for (uint32_t k = 0; k < n && k < 16; k++) {
@@ -396,7 +397,7 @@ static void draw(uint32_t cx, const uint32_t *stream, uint32_t prim, uint32_t in
 	 * Cast bodies in Phantasy Star Nova's character creator came out flat green */
 	if (is_gxp(d.fprog)) {
 		uint32_t mw[USSE_MAX_MEMTEX][4]; int mu[USSE_MAX_MEMTEX];
-		int nm = usse_memory_textures(usse_get(d.fprog), d.funiforms, d.fubuf, mw, mu);
+		int nm = usse_memory_textures(usse_get(d.fprog), d.funiforms, d.fubuf, d.ftexstate, mw, mu);
 		for (int i = 0; i < nm; i++) d.tex[mu[i]] = (mw[i][2] & ~3u) ? texture_words(mw[i][0], mw[i][1], mw[i][2], mw[i][3]) : (GfxTexture){0};
 	}
 	/* the vertex program's textures, when it samples any (GXP +0x1c/+0x20: 4 usage bits a unit): the

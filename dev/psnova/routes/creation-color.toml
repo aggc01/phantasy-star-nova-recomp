@@ -1,0 +1,10 @@
+# Start a new game, make a Cast Male, then open Edit Character and change its colors: the body pass's color constants.
+description = "new game, Cast Male, then Edit Character's color settings"
+fixture = "empty-2026-11-26"
+end = 16200
+shots = [14100, 14400, 14600, 14800, 15000, 15200, 15400, 15600, 15800, 16000, 16200]
+gfx = "gpu"
+clock = "real"
+# creation-cast's buttons up to the main menu (race, class, base, voice), then Up x2 (Edit Character), Circle, Select
+# (camera reset), Down x2 (Edit Costume), Circle, Circle (Edit Main Color), Right x5, then Down x3.
+buttons = ["1300-1340:8", "1700-1740:8", "2000-2015:2000", "9600-9615:2000", "9800-9805:40", "9830-9835:40", "9860-9865:40", "9890-9895:40", "10000-10015:2000", "10300-10315:2000", "10600-10615:2000", "10900-10915:2000", "11300-11315:2000", "11400-11405:40", "11600-11615:2000", "12000-12015:2000", "13600-13605:10", "13700-13705:10", "13900-13915:2000", "14200-14205:1", "14300-14305:40", "14350-14355:40", "14500-14515:2000", "14800-14815:2000", "15100-15105:20", "15150-15155:20", "15200-15205:20", "15250-15255:20", "15300-15305:20", "15600-15605:40", "15650-15655:40", "15700-15705:40"]

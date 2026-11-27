@@ -1369,7 +1369,7 @@ static uint32_t snap_fetch(Gen *g, int slot, int unit, uint32_t u, uint32_t v) {
 	uint32_t texel = nid(s); INS(&s->func, SpvOpImageFetch, t_vec(s, tf, 4), texel, img, coord, 2 /*Lod*/, c_int(s, 0));
 	return texel;
 }
-/* a constant load (usse.c's find_constant_loads): its words, which usse_setup_registers put in SA from args[1] on */
+/* a constant load (usse.c's find_constant_loads): its words, which usse_run_secondary put in SA from args[1] on */
 static void emit_const_load(Gen *g, const UOp *op, int *ok) {
 	UOperand o; memset(&o, 0, sizeof o); o.bank = BK_SA; o.type = TY_U32; for (int c = 0; c < 4; c++) o.swiz[c] = (uint8_t)c;
 	for (int k = 0; k < op->reps; k++) {

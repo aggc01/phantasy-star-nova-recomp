@@ -49,7 +49,7 @@ typedef struct {
  * binds that texture to, else -1 */
 static inline int usse_memtex_unit(const UOp *op) { return op->op == OP_SMP && op->args[1] > 0 ? op->args[1] - 1 : -1; }
 /* a fragment LDST at a constant offset from a uniform-buffer pointer (usse.c's find_constant_loads): the first of the SA
- * words usse_setup_registers fills with what it loads (one a repeat), else -1 */
+ * words usse_run_secondary fills with what it loads (one a repeat), else -1 */
 #define USSE_MAX_CLOAD 192
 static inline int usse_const_load(const UOp *op) { return op->op == OP_LDST && op->args[2] == 2 ? op->args[1] : -1; }
 

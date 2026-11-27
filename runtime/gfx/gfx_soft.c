@@ -2342,7 +2342,7 @@ static int render_interp(const GfxDraw *d) {
 	r->d = *d; r->use_interp = 1; r->vprog = vp; r->fprog = fp; r->draw_index = ndraw;
 	r->vlayout = usse_vertex_layout(vp); r->flayout = usse_fragment_layout(fp);
 	usse_setup_registers(vp, &r->vdraw, d->vuniforms, d->vubuf);
-	usse_setup_registers(fp, &r->fdraw, d->funiforms, d->fubuf);
+	usse_setup_registers(fp, &r->fdraw, d->funiforms, d->fubuf); usse_set_texture_state(fp, &r->fdraw, d->ftexstate);
 	UsseInst scratch;
 	/* RECOMP_TRACE_DRAW=k: RECOMP_USSE_TRACE for that draw alone -- both secondary programs here,
 	 * then its first vertex (fetch_interp); RECOMP_DEBUG_DRAW covers its fragments */

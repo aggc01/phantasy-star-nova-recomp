@@ -142,6 +142,11 @@ typedef struct {
 	 * blood) lean on it to win against the wall they lie on; without it they z-fought and flashed in and out. 0 in an
 	 * old capture. */
 	int8_t depth_bias_factor, depth_bias_units;
+	/* the fragment program's texture state: its textures' SceGxmTexture words in sampler order, 16 bytes each (a patched
+	 * program's state +4). A program reaches them through an SA pointer of uniform-buffer info reside 15 (usse.c's
+	 * usse_set_texture_state): Nova's Cast body pass reads seven textures' words and its colours past them that way. 0 in
+	 * an old capture: such a pointer stays 0. */
+	uint32_t ftexstate;
 } GfxDraw;
 
 /* GfxDraw.prim is the SceGxmPrimitiveType exactly as the game passed it to sceGxmDraw (and as

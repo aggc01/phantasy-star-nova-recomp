@@ -1,0 +1,10 @@
+# Start a new game, make a Cast Male, then press Randomize in Edit Character: new parts and colours through the body pass.
+description = "new game, Cast Male, then Edit Character's Randomize"
+fixture = "empty-2026-11-26"
+end = 15600
+shots = [14400, 14700, 15000, 15300, 15600]
+gfx = "gpu"
+clock = "real"
+# creation-cast's buttons up to the main menu, then Up x2 (Edit Character), Circle, Select (camera reset), Down x3
+# (Randomize), then Circle three times (Randomize, its confirmation, once more).
+buttons = ["1300-1340:8", "1700-1740:8", "2000-2015:2000", "9600-9615:2000", "9800-9805:40", "9830-9835:40", "9860-9865:40", "9890-9895:40", "10000-10015:2000", "10300-10315:2000", "10600-10615:2000", "10900-10915:2000", "11300-11315:2000", "11400-11405:40", "11600-11615:2000", "12000-12015:2000", "13600-13605:10", "13700-13705:10", "13900-13915:2000", "14200-14205:1", "14300-14305:40", "14350-14355:40", "14400-14405:40", "14500-14515:2000", "14800-14815:2000", "15100-15115:2000"]

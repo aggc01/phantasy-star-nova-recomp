@@ -686,7 +686,8 @@ struct UsseProgram {
 	UsseFragLayout fl;
 	uint32_t literal_addr, literal_words;   /* container 16's data, for the uniform-buffer-address table */
 	int8_t additive;   /* usse_fragment_fb_blend's answer + 1, once asked (0: not yet) */
-	struct { int sa, unit; uint32_t off[4]; } memtex[USSE_MAX_MEMTEX]; int nmemtex;   /* find_memory_textures */
+	struct { int sa, unit; uint32_t off[4]; } memtex[USSE_MAX_MEMTEX]; int nmemtex, ndeclared_mem;   /* find_memory_textures (ndeclared_mem: its samples that read the texture state, units the game set) */
+	int ntexptr; uint8_t texptr_sa[8]; int32_t texptr_bias[8];   /* its SA pointers into the texture state (reside 15) and their biases: usse_set_texture_state */
 	struct { uint8_t sa, word; uint32_t off; } cload[USSE_MAX_CLOAD]; int ncload;   /* find_constant_loads */
 	struct UsseProgram *next, *hnext;   /* the address table's chain; the content table's chain (decoded entries only) */
 };
@@ -1510,6 +1511,12 @@ void usse_set_trace(int on) { g_trace_force = on; }
 void usse_run_secondary(const UsseProgram *p, UsseInst *inst, UsseDraw *d) {
 	Ctx cx = {0}; cx.t = inst; cx.d = d; cx.secondary = 1;
 	run_program(&cx, p->sec, p->nsec);
+	/* the constant loads' words (find_constant_loads), once every pointer is set: by usse_setup_registers, by
+	 * usse_set_texture_state (Nova's Cast body pass reads its textures' words through one), and by the secondary program */
+	for (int i = 0; i < p->ncload; i++) {
+		uint32_t b = d->sa[p->cload[i].sa].u;
+		d->sa[p->cload[i].word].u = b ? RD32(b + p->cload[i].off) : 0;
+	}
 }
 void usse_run_primary(const UsseProgram *p, UsseInst *inst, UsseDraw *d, void *texctx, UsseTexFn texfn) {
 	Ctx cx = {0}; cx.t = inst; cx.d = d; cx.texctx = texctx; cx.texfn = texfn;
@@ -1673,6 +1680,16 @@ static void find_memory_textures(UsseProgram *p, uint32_t prog) {
 	uint32_t depcnt = h_table_count(prog, H_DEPSAMP_COUNT, H_DEPSAMP_OFF, 4, H_CAP_DEPSAMP), depbase = RD32(prog + H_DEPSAMP_OFF) ? prog + H_DEPSAMP_OFF + RD32(prog + H_DEPSAMP_OFF) : 0;
 	for (uint32_t i = 0; depbase && i < depcnt; i++) { int u = RD16(depbase + 4 * i) / 4; if (u < 16) taken |= 1u << u; }
 	if (p->is_fragment) for (int i = 0; i < p->fl.niters; i++) if (p->fl.iters[i].is_tex && p->fl.iters[i].tex_unit >= 0 && p->fl.iters[i].tex_unit < 16) taken |= 1u << p->fl.iters[i].tex_unit;
+	/* the SA words that point into the texture state (uniform-buffer info resides in 15, beside the default buffer's
+	 * 14): the program's own textures' words, 16 bytes a unit, with the entry's bias -- what sceGxmSetFragmentTexture
+	 * set. A sample whose four words come from there samples that declared unit (Nova's Cast body pass: units 1-9
+	 * through SA 119, at -4). usse_setup_registers leaves such a pointer 0: the words read through it were all 0, and
+	 * the body came out black whatever colour was chosen. */
+	int tsa[8], tbias[8], ntsa = 0, c19base = 0, c19size = 0; find_container(prog, 19, &c19base, &c19size);
+	uint32_t ucnt = h_table_count(prog, H_UBINFO_COUNT, H_UBINFO_OFF, 8, H_CAP_UBINFO), ubase = RD32(prog + H_UBINFO_OFF) ? prog + H_UBINFO_OFF + RD32(prog + H_UBINFO_OFF) : 0;
+	for (uint32_t i = 0; ubase && i < ucnt && ntsa < 8; i++) if (RD16(ubase + 8 * i) == 15) { tsa[ntsa] = c19base + RD16(ubase + 8 * i + 2); tbias[ntsa++] = (int32_t)RD32(ubase + 8 * i + 4); }
+	p->ntexptr = 0; for (int m = 0; m < ntsa; m++) if (tsa[m] >= 0 && tsa[m] < 256) { p->texptr_sa[p->ntexptr] = (uint8_t)tsa[m]; p->texptr_bias[p->ntexptr++] = tbias[m]; }
+	p->ndeclared_mem = 0;
 	for (int k = 0; k < p->nprim; k++) {
 		UOp *op = &p->prim[k];
 		if (op->op != OP_SMP || op->s1.bank != BK_TEMP) continue;
@@ -1693,6 +1710,20 @@ static void find_memory_textures(UsseProgram *p, uint32_t prog) {
 			}
 		}
 		if (have != 15) continue;
+		int declared = -1;
+		for (int m = 0; m < ntsa; m++) if (tsa[m] == sa) {
+			int64_t at = (int64_t)off[0] + tbias[m];
+			if (at >= 0 && at % 16 == 0 && at / 16 < 16 && off[1] == off[0] + 4 && off[2] == off[0] + 8 && off[3] == off[0] + 12) declared = (int)(at / 16);
+		}
+		if (declared >= 0) {   /* the state holds the textures in sampler order (gxm_sony.c: sampler k at +16k): the k-th sampler parameter's unit */
+			uint32_t pcnt = h_table_count(prog, H_PARAM_COUNT, H_PARAM_OFF, 16, H_CAP_PARAMS), pbase = h_param_base(prog); int k = 0;
+			for (uint32_t i = 0; pbase && i < pcnt; i++) {
+				uint32_t pr = param_at(pbase, (int)i);
+				if ((RD16(pr + 4) & 15) != 2) continue;
+				if (k++ == declared) { uint32_t r = RD32(pr + 12); declared = r < 16 ? (int)r : -1; break; }
+			}
+		}
+		if (declared >= 0) { op->args[1] = declared + 1; p->ndeclared_mem++; continue; }   /* (the unit the game set: nothing to read or bind) */
 		int unit = -1;
 		for (int m = 0; m < p->nmemtex; m++) if (p->memtex[m].sa == sa && !memcmp(p->memtex[m].off, off, sizeof off)) unit = p->memtex[m].unit;   /* the same texture again: its unit */
 		if (unit < 0) {
@@ -1707,7 +1738,7 @@ static void find_memory_textures(UsseProgram *p, uint32_t prog) {
 /* A fragment program's loads at constant offsets from a uniform-buffer pointer (LDST from an SA word plus immediates):
  * the same words for every fragment of a draw. A GPU fragment program can't read guest memory (only render targets,
  * usse_spirv.c's emit_ldst_target), so each such load gets SA words above every one the program reads (args[1] = the
- * first, args[2] = 2: usse_const_load) and usse_setup_registers fills them from memory for each draw; the translator
+ * first, args[2] = 2: usse_const_load) and usse_run_secondary fills them from memory for each draw; the translator
  * reads them there. Nova's Cast body pass reads its colours and the words of seven textures so:
  * every frame it drew fell to the software path. A program that indexes SA, or whose free SA words run out, keeps the
  * loads it has left. Only a program that also samples a texture from memory (find_memory_textures): a pointer into a
@@ -1715,7 +1746,7 @@ static void find_memory_textures(UsseProgram *p, uint32_t prog) {
  * would be stale. */
 static void find_constant_loads(UsseProgram *p) {
 	p->ncload = 0;
-	if (!p->is_fragment || !p->nmemtex) return;
+	if (!p->is_fragment || !(p->nmemtex || p->ndeclared_mem)) return;
 	int top = 0;
 	const UOp *code[2] = {p->prim, p->sec}; int n[2] = {p->nprim, p->nsec};
 	for (int c = 0; c < 2; c++) for (int k = 0; k < n[c]; k++) {
@@ -1736,9 +1767,10 @@ static void find_constant_loads(UsseProgram *p) {
 		}
 	}
 }
-int usse_memory_textures(const UsseProgram *p, uint32_t def_uniform_buf, const uint32_t ubuf[14], uint32_t words[][4], int units[]) {
+int usse_memory_textures(const UsseProgram *p, uint32_t def_uniform_buf, const uint32_t ubuf[14], uint32_t tex_state, uint32_t words[][4], int units[]) {
 	if (!p || !p->nmemtex) return 0;
-	UsseDraw d; usse_setup_registers(p, &d, def_uniform_buf, ubuf);
+	UsseDraw d; usse_setup_registers(p, &d, def_uniform_buf, ubuf); usse_set_texture_state(p, &d, tex_state);
+	UsseInst scratch; memset(&scratch, 0, sizeof scratch); usse_run_secondary(p, &scratch, &d);   /* (the pointer is the secondary program's: see usse_run_secondary) */
 	for (int i = 0; i < p->nmemtex; i++) {
 		uint32_t b = d.sa[p->memtex[i].sa & 255].u;
 		for (int w = 0; w < 4; w++) words[i][w] = b ? RD32(b + p->memtex[i].off[w]) : 0;
@@ -1874,10 +1906,10 @@ void usse_setup_registers(const UsseProgram *p, UsseDraw *d, uint32_t def_unifor
 		int unitn = rilo / 4, word = rilo % 4;
 		if (word == 0) { int at = c19base + sa_off; if (at >= 0 && at < 256 && unitn < 255) d->sa_unit[at] = (uint8_t)(unitn + 1); }   /* the unit, beside the SA words (UsseDraw.sa_unit): those stay 0 */
 	}
-	for (int i = 0; i < p->ncload; i++) {   /* the constant loads' words (find_constant_loads), through the pointers just set */
-		uint32_t b = d->sa[p->cload[i].sa].u;
-		d->sa[p->cload[i].word].u = b ? RD32(b + p->cload[i].off) : 0;
-	}
+}
+void usse_set_texture_state(const UsseProgram *p, UsseDraw *d, uint32_t tex_state) {
+	if (!tex_state) return;
+	for (int i = 0; i < p->ntexptr; i++) d->sa[p->texptr_sa[i]].u = tex_state + (uint32_t)p->texptr_bias[i];
 }
 void usse_pack_attr(UsseInst *inst, const UsseAttrSlot *slot, const float comps[4], const void *raw, int rawlen) {
 	if (!slot) return;

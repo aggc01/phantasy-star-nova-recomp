@@ -5942,7 +5942,7 @@ void gfx_gpu_draw(const GfxDraw *d) {
 	UsseDraw vdraw = {0}, fdraw = {0};
 	sync_draw_reads(d, 0, fp);   /* (the SA words below, the vertex streams the rings copy) */
 	usse_setup_registers(vp, &vdraw, d->vuniforms, d->vubuf);
-	usse_setup_registers(fp, &fdraw, d->funiforms, d->fubuf);
+	usse_setup_registers(fp, &fdraw, d->funiforms, d->fubuf); usse_set_texture_state(fp, &fdraw, d->ftexstate);
 	UsseInst scratch;
 	memset(&scratch, 0, sizeof scratch); usse_run_secondary(vp, &scratch, &vdraw);
 	memset(&scratch, 0, sizeof scratch); usse_run_secondary(fp, &scratch, &fdraw);
