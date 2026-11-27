@@ -1678,8 +1678,28 @@ static void tscale_init(void) {
 	}
 }
 int gfx_gpu_target_scale_supported(void) { tscale_init(); return ntscale > 0; }   /* the game names targets to draw finer (the overlay's "Full-resolution world" row) */
+/* ---- targets that stay at the game's own resolution whatever the render scale (RECOMP_TARGET_NATIVE, a game's RUN_ENV:
+ * "<w>x<h>[,...]"). A blur chain gets most of its softness from drawing small and being stretched back over the frame:
+ * Phantasy Star Nova's bloom blurs at 240x136 and 120x68 and adds the result to the whole screen. Scaled 6x, those
+ * targets hold six times the detail, the stretch no longer softens anything, and the glow becomes a hard copy of every
+ * outline beside it. At 1x they blur as on the Vita. (A width the screen's aspect widens keeps that widening.) */
+static struct { uint32_t w, h; } tnative[8]; static int ntnative = -1;
+static int target_native(uint32_t w, uint32_t h) {
+	if (ntnative < 0) {
+		ntnative = 0; const char *e = getenv("RECOMP_TARGET_NATIVE");
+		while (e && *e && ntnative < 8) {
+			unsigned tw, th; int used = 0;
+			if (sscanf(e, "%ux%u%n", &tw, &th, &used) == 2 && used > 0) { tnative[ntnative].w = tw; tnative[ntnative].h = th; ntnative++; }
+			else break;
+			e += used; if (*e == ',') e++;
+		}
+	}
+	for (int k = 0; k < ntnative; k++) if (tnative[k].w == w && tnative[k].h == h) return 1;
+	return 0;
+}
 static void target_scale(uint32_t w, uint32_t h, uint8_t *sx, uint8_t *sy) {
 	tscale_init();
+	if (target_native(w, h)) { int x = (rscale_x + rscale / 2) / rscale; *sx = (uint8_t)(x < 1 ? 1 : x); *sy = 1; return; }
 	int x = rscale_x, y = rscale;
 	if (ntscale > 0 && settings_int("full_res_world", 1)) for (int k = 0; k < ntscale; k++) if (tscale[k].w == w && tscale[k].h == h) {   /* (settings "full_res_world" 0: the game's own resolution; read at each scene: a change applies at once -- targets at the other scale are new entries, the old ones age out) */
 		int a = (int)((float)rscale_x * tscale[k].f + 0.5f), b = (int)((float)rscale * tscale[k].f + 0.5f);
